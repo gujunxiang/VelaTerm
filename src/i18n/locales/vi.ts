@@ -557,12 +557,16 @@ const vi: typeof en = {
   "settings.navTree": "Dạng cây",
   "settings.navCompact": "Gọn",
   "settings.tabs": "Thẻ",
+  "settings.tabsHint": "“Đơn” dùng lại cùng một thẻ cho mọi phiên bạn mở và giữ các phiên còn lại chạy nền. “Nhiều” cấp cho mỗi phiên một thẻ riêng.",
   "settings.dynamicStatusFilter": "Tự động thêm vào bộ lọc trạng thái",
+  "settings.dynamicStatusFilterHint": "Bộ lọc trạng thái giữ lại những phiên khớp tại thời điểm bạn áp dụng. Khi bật, những phiên bắt đầu khớp về sau cũng được thêm vào. Phiên không bao giờ bị loại bỏ khi trạng thái thay đổi.",
   "settings.tabSingle": "Đơn",
   "settings.tabMulti": "Nhiều",
   "settings.maxLiveTabs": "Giới hạn nền",
+  "settings.maxLiveTabsHint": "Số phiên tiếp tục chạy nền ở chế độ một thẻ. Vượt giới hạn, phiên rảnh lâu nhất sẽ bị đóng; những phiên đang chạy, đang chờ bạn phản hồi hoặc có thông báo chưa đọc thì được giữ lại.",
   "settings.defaultShell": "Shell mặc định",
   "settings.spawnConfirm": "Xác nhận trước khi tạo phiên",
+  "settings.spawnConfirmHint": "Áp dụng cho các phiên mà tác nhân sinh ra bằng vspawn, không phải thẻ bạn tự mở. Khi bật, bạn có thể xem lại và sửa lời nhắc trước khi phiên khởi chạy.",
   "settings.usageAuto": "Tự động làm mới mức sử dụng",
   "settings.usageRefresh": "Làm mới mức sử dụng",
   "settings.autoContinue": "Tiếp tục sau khi đặt lại giới hạn",
@@ -858,7 +862,7 @@ const vi: typeof en = {
   "settings.fontPreviewChat": "Trang cài đặt đã được cập nhật. Mỗi thiết lập phông chữ có hiệu lực ngay và bạn có thể khôi phục giá trị mặc định bất cứ lúc nào.",
   "settings.fontResetGroup": "Khôi phục phông chữ mặc định",
   "settings.composerChips": "Thanh công cụ soạn tin",
-  "settings.composerChipsHint": "Các mục được bật xuất hiện cạnh tin nhắn theo thứ tự hiển thị ở đây. Khi một tính năng tạm thời không dùng được (tác nhân chưa chạy, không có tác vụ nền hoặc chưa đăng nhập xong), mục đó vẫn hiển thị nhưng trống hoặc bị vô hiệu hóa. Các tính năng mà tác nhân hiện tại không hỗ trợ sẽ không xuất hiện. Những mục không đủ chỗ sẽ chuyển vào menu Thêm. Các mục được tắt ở đây chỉ xuất hiện trong menu đó và vẫn có thể được cấu hình tại đây.",
+  "settings.composerChipsHint": "Các mục được bật xuất hiện cạnh tin nhắn theo thứ tự hiển thị ở đây. Khi một tính năng tạm thời không dùng được (tác nhân chưa chạy, không có tác vụ nền hoặc chưa đăng nhập xong), mục đó vẫn hiển thị nhưng trống hoặc bị vô hiệu hóa. Các tính năng mà tác nhân hiện tại không hỗ trợ sẽ không xuất hiện. Những mục không đủ chỗ sẽ chuyển vào menu Thêm. Các mục được tắt ở đây sẽ không hiển thị ở bất kỳ đâu cho đến khi bạn bật lại.",
   "settings.composerChipUp": (chip: string) => `Đưa ${chip} lên trên`,
   "settings.composerChipDown": (chip: string) => `Đưa ${chip} xuống dưới`,
   "settings.composerChip.model": "Mô hình",
@@ -1012,6 +1016,19 @@ const vi: typeof en = {
   "connect.wslSetup": "Khi kết nối, phiên bản máy chủ VelaTerm tương ứng sẽ được tải xuống và khởi chạy trong WSL nếu cần. Không cần cấu hình SSH.",
   "conn.wslReconnecting": "Đang kết nối lại với không gian làm việc WSL…",
   "conn.wslDown": "Không gian làm việc WSL hiện không khả dụng. Chọn “Kết nối lại ngay” để thử lại.",
+  "remote.listenLabel": "Lắng nghe trên", // Listen on
+  "remote.listenAll": "Mọi mạng", // All networks
+  "remote.listenLoopback": "Chỉ máy này (đường hầm)", // This computer only (tunnel)
+  "remote.listenUnavailable": (ip: string) => `${ip} (không khả dụng)`, // ${ip} (not available)
+  "remote.reachAll": "Truy cập được từ mọi mạng mà máy này đang kết nối.", // Reachable from every network this computer is connected to.
+  "remote.reachOnly": (addr: string) => `Chỉ truy cập được tại ${addr}.`, // Reachable only at ${addr}.
+  "remote.reachTunnel": "Chỉ truy cập được qua đường hầm hoặc proxy trên máy này, ví dụ tailscale serve hoặc ssh -L.", // Reachable only through a tunnel or proxy on this computer, for example tailscale serve or ssh -L.
+  "remote.pairingHostLabel": "Địa chỉ cho liên kết ghép nối", // Address for pairing links
+  "remote.pairingHostPlaceholder": "host.tailnet.ts.net", // host.tailnet.ts.net
+  "remote.pairingHostNeeded": "Máy khách kết nối tới máy này qua đường hầm. Hãy nhập tên máy chủ hoặc IP mà chúng sử dụng. Nếu để trống, liên kết ghép nối sẽ trỏ tới 127.0.0.1, chỉ dùng được với ssh -L.", // Clients reach this computer through a tunnel. Enter the host name or IP they use. Without it, pairing links point to 127.0.0.1, which only works with ssh -L.
+  "remote.bindInvalid": (value: string) => `“${value}” không phải địa chỉ lắng nghe hợp lệ. Hãy chọn mọi mạng, chỉ máy này, hoặc một địa chỉ IPv4 của máy này.`, // "${value}" is not a valid listen address. Choose all networks, this computer only, or an IPv4 address of this computer.
+  "remote.bindUnavailable": (ip: string) => `Địa chỉ ${ip} không khả dụng trên máy này. Hãy kết nối mạng hoặc VPN, hoặc chọn địa chỉ khác. Truy cập từ xa không bao giờ tự chuyển sang mọi mạng.`, // The address ${ip} is not available on this computer. Connect the network or VPN, or choose another address. Remote access never falls back to all networks.
+  "remote.pairingHostInvalid": (value: string) => `“${value}” không phải địa chỉ hợp lệ cho liên kết ghép nối. Hãy nhập tên máy chủ hoặc địa chỉ IPv4, không kèm giao thức, cổng hay đường dẫn.`, // "${value}" is not a valid address for pairing links. Enter a host name or an IPv4 address, without scheme, port, or path.
   "connect.title": "Kết nối máy chủ từ xa",
   "connect.pairingPlaceholder": "Dán liên kết ghép đôi",
   "connect.confirmConnect": "Dấu vân tay khớp, kết nối",
@@ -1595,6 +1612,7 @@ const vi: typeof en = {
   "files.nameLabel": "Tên",
   "files.newTooltip": "Tệp hoặc thư mục mới",
   "files.openInTerminal": "Mở trong terminal",
+  "files.collapseAll": "Thu gọn tất cả",
   "files.revealInFinder": "Hiện trong trình quản lý tệp",
   "files.copyPath": "Sao chép đường dẫn",
   "files.copyRelPath": "Sao chép đường dẫn tương đối",
@@ -2597,6 +2615,8 @@ const vi: typeof en = {
   "sidebarSection.nav": "Các mục thanh bên",
   "sidebarSection.noTasks": "Chưa có phiên nhiệm vụ nào.",
   "sidebarSection.noChats": "Chưa có phiên trò chuyện nào.",
+  "sidebarSection.setDefaultView": "Đặt làm chế độ xem mặc định",
+  "sidebarSection.clearDefaultView": "Bỏ chế độ xem mặc định",
   "artifact.comment": "Bình luận",
   "artifact.commentTitle": "Chọn các phần tử trên trang để để lại bình luận cho tác nhân",
   "artifact.pickHint": "Nhấp vào một phần tử trên trang để bình luận. Nhấn Esc để dừng.",

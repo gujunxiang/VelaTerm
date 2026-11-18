@@ -70,6 +70,9 @@ pub use server_supply::run_verify_update;
 mod server_region;
 // vela-server host subcommands: account linking, full access, service install and self-update.
 mod host_cli;
+// Minimal ~/.ssh/config parser shared by the SSH transports. Consulted by the russh path so a user's
+// existing publickey configuration is honoured instead of falling through to a password prompt.
+mod ssh_config;
 // GUI-only client-side SSH orchestration, provisioning, serve, forwarding, and auto-login.
 #[cfg(feature = "gui")]
 mod ssh_remote;
@@ -1743,6 +1746,10 @@ struct ServeArgs {
     /// Account relay only (`vela-server` / `vela-server run`): no local web listener at all, the host is reached
     /// solely through the outbound share tunnel. Not settable from `--serve` flags.
     relay_only: bool,
+    /// `--bind <all|loopback|IPv4>`: where this process's CLI-configured instance listens, overriding the
+    /// persisted remote-access setting for this process only (never written back). None follows the setting.
+    /// Only `loopback` is accepted together with `--local-http`, which always binds 127.0.0.1.
+    bind: Option<crate::web::BindChoice>,
 }
 
 /// Recommended headless password environment variable, avoiding exposure in process arguments.
@@ -1751,15 +1758,112 @@ const SERVE_PASSWORD_ENV: &str = "VELA_SERVE_PASSWORD";
 /// Legacy pre-rename password variable for backward compatibility only.
 const SERVE_PASSWORD_ENV_LEGACY: &str = "VLX_SERVE_PASSWORD";
 
-/// Parse arguments after `--serve`; explicit password overrides env_password. Errors are user-facing.
+/// Usage line for `--serve`, including the password source precedence.
+const SERVE_USAGE: &str = "usage: vlx-term --serve [--port 8799] [--password <password> | --password-file <path>] [--data-dir <dir>] [--local-http] [--lan-http] [--print-pairing] [--bind all|loopback|<IPv4>] [--mirror 0|1]\n  \
+     password precedence: --password > --password-file > VELA_SERVE_PASSWORD > VLX_SERVE_PASSWORD; \
+     the file must not be accessible by group or others (chmod 600), and child processes never see the password";
+
+/// Read both password variables (the new name wins) and remove them from this process's environment,
+/// so no PTY session, chat engine, model probe or other helper spawned later inherits the password.
+///
+/// `serve_startup_env` calls it as the very first step of `--serve`, before `login_env::hydrate` and
+/// before any child exists, and once more after hydrate (see there).
+/// Rust's `Command` also takes the same environment lock as `remove_var`, so a spawn can never observe a
+/// half-updated environment.
+fn take_serve_password_env() -> Option<String> {
+    let password = std::env::var(SERVE_PASSWORD_ENV)
+        .ok()
+        .or_else(|| std::env::var(SERVE_PASSWORD_ENV_LEGACY).ok());
+    std::env::remove_var(SERVE_PASSWORD_ENV);
+    std::env::remove_var(SERVE_PASSWORD_ENV_LEGACY);
+    password
+}
+
+/// Names of both serve password variables, for spawn paths that must never pass them on.
+#[cfg_attr(not(unix), allow(dead_code))]
+pub(crate) const SERVE_PASSWORD_ENV_KEYS: [&str; 2] = [SERVE_PASSWORD_ENV, SERVE_PASSWORD_ENV_LEGACY];
+
+/// The environment step of `--serve` startup: take the password variables out of the environment,
+/// then run `hydrate` (the login-shell environment recovery, which spawns the first child of the
+/// process), then scrub again.
+///
+/// Why this order: the first take runs before anything spawns a child, so the login-shell probe and
+/// everything its startup files launch already start without the password. The only other thread that
+/// can exist at that point is main.rs's parent watch (`exit_with_parent`, set up for the Electron sidecar),
+/// which only sleeps and checks the parent process and reads no variables. A startup file may export
+/// the variable itself and hydrate then copies it back into this process; as before this change, such a
+/// value wins over the inherited one, and the second take removes it again. That second take is still
+/// safe: besides the parent watch, the only other thread that can exist then is hydrate's probe worker
+/// after a timeout, which is blocked waiting on a child whose environment was captured at spawn and reads
+/// no variables.
+fn serve_startup_env(hydrate: impl FnOnce()) -> Option<String> {
+    let inherited = take_serve_password_env();
+    hydrate();
+    take_serve_password_env().or(inherited)
+}
+
+/// How an argument appears in an error message. Flags are shown as typed; a bare value is hidden, because
+/// a misaligned command line (for example a value left over after `--password <pw>`) could otherwise
+/// print the password to stderr and from there into a service log.
+fn shown_arg(arg: &str) -> String {
+    if arg.starts_with('-') {
+        arg.to_string()
+    } else {
+        format!("<value hidden, {} characters>", arg.chars().count())
+    }
+}
+
+/// Read the access password from `--password-file`: the first line with trailing CR/LF removed. On Unix
+/// the file must not be readable or writable by group or others. Errors name the path but never the
+/// content.
+fn read_password_file(path: &str) -> Result<String, String> {
+    use std::io::Read;
+    // A FIFO or device would block or stream on open; only a regular file is a password file.
+    let kind = std::fs::metadata(path).map_err(|e| format!("cannot open --password-file {path}: {e}"))?;
+    if !kind.is_file() {
+        return Err(format!("--password-file {path} is not a regular file"));
+    }
+    let mut file = std::fs::File::open(path)
+        .map_err(|e| format!("cannot open --password-file {path}: {e}"))?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        // Check the opened handle, not the path, so the file cannot be swapped between check and read.
+        let mode = file
+            .metadata()
+            .map_err(|e| format!("cannot read metadata of --password-file {path}: {e}"))?
+            .permissions()
+            .mode();
+        if mode & 0o077 != 0 {
+            return Err(format!(
+                "--password-file {path} is accessible by group or others (mode {:03o}); restrict it with: chmod 600 {path}",
+                mode & 0o777
+            ));
+        }
+    }
+    let mut content = String::new();
+    file.read_to_string(&mut content)
+        .map_err(|e| format!("cannot read --password-file {path}: {e}"))?;
+    let first = content.split('\n').next().unwrap_or("").trim_end_matches(['\r', '\n']);
+    if first.trim().is_empty() {
+        return Err(format!("--password-file {path} is empty (the password must be on its first line)"));
+    }
+    Ok(first.to_string())
+}
+
+/// Parse arguments after `--serve`. Password precedence: `--password`, then `--password-file`, then
+/// env_password (already resolved from VELA_SERVE_PASSWORD, then VLX_SERVE_PASSWORD). Errors are
+/// user-facing.
 fn parse_serve_args(args: &[String], env_password: Option<String>) -> Result<ServeArgs, String> {
     let mut port: u16 = 8799;
     let mut password: Option<String> = None;
+    let mut password_file: Option<String> = None;
     let mut data_dir: Option<String> = None;
     let mut local_http = false;
     let mut lan_http = false;
     let mut print_pairing = false;
     let mut mirror: Option<bool> = None;
+    let mut bind: Option<crate::web::BindChoice> = None;
 
     let mut it = args.iter().skip(2); // Skip executable name and --serve.
     while let Some(arg) = it.next() {
@@ -1768,10 +1872,13 @@ fn parse_serve_args(args: &[String], env_password: Option<String>) -> Result<Ser
                 let v = it.next().ok_or("--port requires a value")?;
                 port = v
                     .parse()
-                    .map_err(|_| format!("--port has invalid value: {v}"))?;
+                    .map_err(|_| format!("--port has invalid value: {}", shown_arg(v)))?;
             }
             "--password" => {
                 password = Some(it.next().ok_or("--password requires a value")?.clone());
+            }
+            "--password-file" => {
+                password_file = Some(it.next().ok_or("--password-file requires a value")?.clone());
             }
             "--data-dir" => {
                 data_dir = Some(it.next().ok_or("--data-dir requires a value")?.clone());
@@ -1790,19 +1897,39 @@ fn parse_serve_args(args: &[String], env_password: Option<String>) -> Result<Ser
                 mirror = Some(match v.as_str() {
                     "1" | "on" | "true" => true,
                     "0" | "off" | "false" => false,
-                    other => return Err(format!("--mirror has invalid value: {other} (use 0 or 1)")),
+                    other => return Err(format!("--mirror has invalid value: {} (use 0 or 1)", shown_arg(other))),
                 });
             }
-            other => return Err(format!("unknown argument: {other}")),
+            "--bind" => {
+                let v = it.next().ok_or("--bind requires a value")?;
+                if v.trim().is_empty() {
+                    return Err("--bind requires a value".into());
+                }
+                bind = Some(crate::web::BindChoice::parse(v).map_err(|_| {
+                    format!("--bind has invalid value: {v} (use all, loopback, or an IPv4 address of this machine)")
+                })?);
+            }
+            other => return Err(format!("unknown argument: {}", shown_arg(other))),
         }
     }
 
-    let password = password
-        .or(env_password)
-        .filter(|p| !p.trim().is_empty())
-        .ok_or(format!(
-            "missing access password: use --password <password>, or set the {SERVE_PASSWORD_ENV} env var (recommended, keeps it out of the process list)"
-        ))?;
+    // --local-http classifies every client as local (full management rights), so its listener must never
+    // be widened beyond loopback.
+    if local_http && bind.as_ref().is_some_and(|b| *b != crate::web::BindChoice::Loopback) {
+        return Err("--local-http always listens on 127.0.0.1; it can only be combined with --bind loopback".into());
+    }
+
+    // An explicit --password wins without touching the file; otherwise a given file must be usable,
+    // and a broken file is an error rather than a silent fallback to the environment.
+    let password = match (password, password_file) {
+        (Some(p), _) => Some(p),
+        (None, Some(path)) => Some(read_password_file(&path)?),
+        (None, None) => env_password,
+    }
+    .filter(|p| !p.trim().is_empty())
+    .ok_or(format!(
+        "missing access password: use --password-file <path> (a chmod 600 file, recommended for services), set the {SERVE_PASSWORD_ENV} env var, or use --password <password>"
+    ))?;
 
     Ok(ServeArgs {
         port,
@@ -1813,7 +1940,37 @@ fn parse_serve_args(args: &[String], env_password: Option<String>) -> Result<Ser
         print_pairing,
         mirror,
         relay_only: false,
+        bind,
     })
+}
+
+/// Turn a listen-address error code from the core into an English terminal sentence. The terminal is not an
+/// i18n surface; the panel maps the same codes to localized text. Other errors pass through unchanged.
+fn describe_listen_error(e: &str) -> String {
+    let (code, detail) = e.split_once(':').unwrap_or((e, ""));
+    match code {
+        "remote_bind_invalid" => format!(
+            "invalid listen address \"{detail}\": use all, loopback, or an IPv4 address of this machine"
+        ),
+        "remote_bind_unavailable" => format!(
+            "listen address {detail} is not present on this machine (is the network or VPN connected?); not falling back to all interfaces"
+        ),
+        "remote_pairing_host_invalid" => format!(
+            "invalid pairing address \"{detail}\" in the remote-access settings: use a host name or an IPv4 address"
+        ),
+        _ => e.to_string(),
+    }
+}
+
+/// One terminal line stating where a LAN-mode instance is reachable.
+fn describe_listen_scope(bind: &crate::web::BindChoice) -> String {
+    match bind {
+        crate::web::BindChoice::All => "  listening on: all interfaces".to_string(),
+        crate::web::BindChoice::Address(ip) => format!("  listening on: {ip} only"),
+        crate::web::BindChoice::Loopback => {
+            "  listening on: 127.0.0.1 only (reach it through a tunnel or proxy on this machine)".to_string()
+        }
+    }
 }
 
 /// Whether `--serve` may print the full pairing URL including the long-lived `#pair` token fragment:
@@ -1852,6 +2009,7 @@ pub(crate) fn run_relay_serve(data_dir: Option<String>) -> Result<(), String> {
         print_pairing: false,
         mirror: None,
         relay_only: true,
+        bind: None,
     })
 }
 
@@ -1866,28 +2024,40 @@ pub fn run_host_cli(args: &[String]) -> bool {
 }
 
 pub fn run_serve(args: &[String]) {
-    // Prefer the new variable and fall back to the legacy name.
-    let env_password = std::env::var(SERVE_PASSWORD_ENV)
-        .ok()
-        .or_else(|| std::env::var(SERVE_PASSWORD_ENV_LEGACY).ok());
-    // Every terminal session inherits this process's environment; the access password must not reach them.
-    std::env::remove_var(SERVE_PASSWORD_ENV);
-    std::env::remove_var(SERVE_PASSWORD_ENV_LEGACY);
+    // Take the password variables out of the environment first, before the login-shell probe and
+    // before serve_main starts the hook server, web servers, engines or PTY manager, so none of their
+    // threads or children can see them. The login-environment recovery runs here, not in main.rs, so
+    // that the scrub precedes it.
+    let env_password = serve_startup_env(|| {
+        #[cfg(unix)]
+        crate::login_env::hydrate();
+    });
     let parsed = match parse_serve_args(args, env_password) {
         Ok(p) => p,
         Err(e) => {
-            crate::diagnostic_warn!("vlx-term --serve failed to start: {e}");
-            crate::diagnostic_warn!(
-                "usage: vlx-term --serve [--port 8799] [--password <password>] [--data-dir <dir>] [--local-http] [--lan-http] [--print-pairing] [--mirror 0|1]"
-            );
+            // Printed directly, not through diagnostic_warn!: that macro deliberately logs only the
+            // template and drops its arguments, so the operator would never see which file failed or
+            // the usage text. Argument errors name paths and flags but never the password content.
+            eprintln!("{}", serve_args_error_message(&e));
             std::process::exit(1);
         }
     };
 
     if let Err(e) = serve_main(&parsed) {
         crate::diagnostic_warn!("vlx-term --serve failed to start: {e}");
+        // diagnostic_warn! records only its template, so a service manager's log would never say why
+        // the start failed (port in use, data directory, certificate). The error names paths and ports,
+        // never the password.
+        eprintln!("vlx-term --serve failed to start: {e}");
         std::process::exit(1);
     }
+}
+
+/// Operator-facing text for a rejected `--serve` command line: the parse error followed by the usage
+/// line (with the password precedence). Kept separate from `run_serve` so a test can pin what the
+/// operator actually reads on stderr.
+fn serve_args_error_message(error: &str) -> String {
+    format!("vlx-term --serve failed to start: {error}\n{SERVE_USAGE}")
 }
 
 /// Fallible `run_serve` implementation extracted for `?` error propagation.
@@ -1953,18 +2123,38 @@ fn serve_main(args: &ServeArgs) -> Result<(), String> {
             && crate::web::is_production_identifier(&identifier)
         {
             return Err(format!(
-                "LAN plaintext (--lan-http, binds 0.0.0.0 in plaintext) is only available in dev builds; this is a release build (identifier={identifier}). \
+                "LAN plaintext (--lan-http, unencrypted on the network) is only available in dev builds; this is a release build (identifier={identifier}). \
                  For production use the default TLS mode, or HTTPS with certificate pinning (see architecture §20)."
             ));
         }
-        let status = web.start(
-            ctx.clone(),
-            crate::web::StartAuth::Password(args.password.clone()),
-            Some(args.port),
+        // The LAN modes follow the persisted listen setting unless --bind overrides it for this process; the
+        // loopback mode (--local-http, the Electron sidecar and SSH connect path) always binds 127.0.0.1.
+        let lan = matches!(
             mode,
-        )?;
+            crate::web::ServeMode::LanTls | crate::web::ServeMode::LanHttp
+        );
+        let listen = if lan {
+            command_core::remote_listen_config(&ctx, args.bind.clone())
+                .map_err(|e| describe_listen_error(&e))?
+        } else {
+            crate::web::ListenConfig::default()
+        };
+        let loopback_without_host =
+            listen.bind == crate::web::BindChoice::Loopback && listen.pairing_host.is_none();
+        let status = web
+            .start_with_listen(
+                ctx.clone(),
+                crate::web::StartAuth::Password(args.password.clone()),
+                Some(args.port),
+                mode,
+                listen.clone(),
+            )
+            .map_err(|e| describe_listen_error(&e))?;
 
         println!("vlx-term headless server started");
+        if lan {
+            println!("{}", describe_listen_scope(&listen.bind));
+        }
         diagnostics::record("INFO","database_ready",serde_json::json!({"status":"success"}));
 
         // Print a fully usable preferred URL first. LAN TLS requires the complete #pair fragment with
@@ -1992,6 +2182,11 @@ fn serve_main(args: &ServeArgs) -> Result<(), String> {
         if let Some(url) = &primary {
             println!("  open in browser: {url}");
         }
+        if lan && loopback_without_host {
+            println!(
+                "  links use 127.0.0.1: with ssh -L that is right; behind tailscale serve or another proxy, replace it with the address clients use (or set the pairing address in the app)"
+            );
+        }
         // Print other interface URLs without repeating the long pairing fragment; users can append it.
         if status.urls.len() > 1 {
             if matches!(mode, crate::web::ServeMode::LanTls)
@@ -2014,12 +2209,23 @@ fn serve_main(args: &ServeArgs) -> Result<(), String> {
         // primary CLI-configured server so a port conflict deterministically hits this secondary instance,
         // where it is logged and nonfatal — the CLI server semantics stay untouched.
         match command_core::web_server_autostart(&ctx) {
-            Ok(Some(remote)) => println!(
-                "  remote access auto-started on port {}",
-                remote.port.unwrap_or(0)
-            ),
+            Ok(Some(remote)) => {
+                println!(
+                    "  remote access auto-started on port {} (from the saved settings; --bind does not apply to it)",
+                    remote.port.unwrap_or(0)
+                );
+                // This instance follows the saved listen setting, not --bind, so say where it listens: an
+                // operator who started the command-line instance on loopback must not assume the whole
+                // process is loopback-only.
+                if let Ok(listen) = command_core::remote_listen_config(&ctx, None) {
+                    println!("{}", describe_listen_scope(&listen.bind));
+                }
+            }
             Ok(None) => {}
-            Err(e) => crate::diagnostic_warn!("  remote access auto-start failed: {e}"),
+            Err(e) => crate::diagnostic_warn!(
+                "  remote access auto-start failed: {}",
+                describe_listen_error(&e)
+            ),
         }
         let _ = web::public_relay::start(&ctx);
     }
@@ -2082,6 +2288,11 @@ fn serve_main(args: &ServeArgs) -> Result<(), String> {
     }
     Ok(())
 }
+
+/// Serializes the tests (here and in `login_env`) that mutate the serve password variables. No other
+/// test reads them.
+#[cfg(test)]
+pub(crate) static SERVE_ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 #[cfg(test)]
 mod tests {
@@ -2146,6 +2357,7 @@ mod tests {
                 print_pairing: false,
                 mirror: None,
                 relay_only: false,
+                bind: None,
             }
         );
     }
@@ -2235,6 +2447,308 @@ mod tests {
         assert!(parse_serve_args(&argv(&["--bogus", "--password", "x"]), None).is_err());
     }
 
+    /// A misaligned command line must not echo a bare value: it could be the password, and the error goes
+    /// to stderr and from there into a service log. Flags are still named so the operator can fix it.
+    #[test]
+    fn parse_serve_args_errors_never_echo_bare_values() {
+        let err = parse_serve_args(&argv(&["--password", "pw", "s3cr3t-leftover"]), None).unwrap_err();
+        assert!(!err.contains("s3cr3t-leftover"), "{err}");
+        assert!(err.contains("value hidden"), "{err}");
+        let err = parse_serve_args(&argv(&["--port", "s3cr3t", "--password", "x"]), None).unwrap_err();
+        assert!(!err.contains("s3cr3t"), "{err}");
+        let err = parse_serve_args(&argv(&["--mirror", "s3cr3t", "--password", "x"]), None).unwrap_err();
+        assert!(!err.contains("s3cr3t"), "{err}");
+        let err = parse_serve_args(&argv(&["--bogus", "--password", "x"]), None).unwrap_err();
+        assert!(err.contains("--bogus"), "flags are still named: {err}");
+    }
+
+    /// Write a password file with the given content and Unix mode into a fresh temp directory.
+    fn password_file(name: &str, content: &str, mode: u32) -> (std::path::PathBuf, String) {
+        let dir = std::env::temp_dir().join(format!(
+            "vela-pwfile-{}-{}-{name}",
+            std::process::id(),
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("password");
+        std::fs::write(&path, content).unwrap();
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+        }
+        #[cfg(not(unix))]
+        let _ = mode;
+        let s = path.to_string_lossy().into_owned();
+        (dir, s)
+    }
+
+    #[test]
+    fn parse_serve_args_password_file_trims_first_line() {
+        let (dir, path) = password_file("trim", "file-pw\r\nsecond line\n", 0o600);
+        let got = parse_serve_args(&argv(&["--password-file", &path]), None).expect("0600 file is accepted");
+        assert_eq!(got.password, "file-pw");
+        let _ = std::fs::remove_dir_all(dir);
+
+        // A single line without a trailing newline and a lone LF both work; inner spaces are kept.
+        let (dir, path) = password_file("plain", "a b c", 0o600);
+        assert_eq!(parse_serve_args(&argv(&["--password-file", &path]), None).unwrap().password, "a b c");
+        let _ = std::fs::remove_dir_all(dir);
+        let (dir, path) = password_file("lf", "pw-lf\n", 0o400);
+        assert_eq!(parse_serve_args(&argv(&["--password-file", &path]), None).unwrap().password, "pw-lf");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn parse_serve_args_password_precedence() {
+        let (dir, path) = password_file("prec", "file-pw\n", 0o600);
+        // --password beats --password-file, in either argument order.
+        let got = parse_serve_args(&argv(&["--password-file", &path, "--password", "flag-pw"]), Some("env-pw".into()))
+            .unwrap();
+        assert_eq!(got.password, "flag-pw");
+        let got = parse_serve_args(&argv(&["--password", "flag-pw", "--password-file", &path]), None).unwrap();
+        assert_eq!(got.password, "flag-pw");
+        // --password-file beats the environment.
+        let got = parse_serve_args(&argv(&["--password-file", &path]), Some("env-pw".into())).unwrap();
+        assert_eq!(got.password, "file-pw");
+        let _ = std::fs::remove_dir_all(dir);
+        // --password wins without reading the file, so a missing file does not matter then.
+        let got = parse_serve_args(
+            &argv(&["--password", "flag-pw", "--password-file", "/nonexistent/vela-pw"]),
+            None,
+        )
+        .unwrap();
+        assert_eq!(got.password, "flag-pw");
+    }
+
+    #[test]
+    fn parse_serve_args_password_file_errors() {
+        // An empty file or an empty first line is an error, never a fallback to the environment.
+        for (name, content) in [("empty", ""), ("newline", "\n"), ("blankfirst", "\r\nsecond\n"), ("spaces", "   \n")] {
+            let (dir, path) = password_file(name, content, 0o600);
+            let err = parse_serve_args(&argv(&["--password-file", &path]), Some("env-pw".into()))
+                .expect_err("empty password file must be rejected");
+            assert!(err.contains("empty") && err.contains(&path), "{name}: {err}");
+            let _ = std::fs::remove_dir_all(dir);
+        }
+        // A missing file is an error naming the path.
+        let err = parse_serve_args(&argv(&["--password-file", "/nonexistent/vela-pw"]), Some("env-pw".into()))
+            .expect_err("missing file must be rejected");
+        assert!(err.contains("/nonexistent/vela-pw"), "{err}");
+        // The flag needs a value.
+        assert!(parse_serve_args(&argv(&["--password-file"]), None).is_err());
+        // A directory (like a FIFO or device) is not a regular file and is refused before opening it.
+        let dir = std::env::temp_dir();
+        let err = parse_serve_args(&argv(&["--password-file", dir.to_str().unwrap()]), None)
+            .expect_err("a directory must be rejected");
+        assert!(err.contains("not a regular file"), "{err}");
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_serve_args_password_file_rejects_group_or_other_access() {
+        for mode in [0o640, 0o604, 0o620, 0o602, 0o644, 0o666] {
+            let (dir, path) = password_file(&format!("mode{mode:o}"), "secret-in-file\n", mode);
+            let err = parse_serve_args(&argv(&["--password-file", &path]), None)
+                .expect_err("group/other accessible file must be rejected");
+            assert!(err.contains(&path) && err.contains("chmod 600"), "mode {mode:o}: {err}");
+            // The content never appears in the error.
+            assert!(!err.contains("secret-in-file"), "mode {mode:o}: {err}");
+            let _ = std::fs::remove_dir_all(dir);
+        }
+    }
+
+    /// What run_serve prints on stderr for a group/other-readable file: the real error with the path
+    /// and the chmod 600 fix, then the usage with the precedence, and never the file content.
+    #[cfg(unix)]
+    #[test]
+    fn serve_args_error_message_shows_path_fix_and_usage() {
+        let (dir, path) = password_file("operator-msg", "secret-in-file\n", 0o644);
+        let err = parse_serve_args(&argv(&["--password-file", &path]), None)
+            .expect_err("group/other accessible file must be rejected");
+        let msg = serve_args_error_message(&err);
+        assert!(msg.starts_with("vlx-term --serve failed to start: --password-file "), "{msg}");
+        assert!(msg.contains(&path) && msg.contains(&format!("chmod 600 {path}")), "{msg}");
+        assert!(msg.contains("--password-file <path>"), "{msg}");
+        assert!(
+            msg.contains("--password > --password-file > VELA_SERVE_PASSWORD > VLX_SERVE_PASSWORD"),
+            "{msg}"
+        );
+        // No unexpanded template placeholders reach the operator.
+        assert!(!msg.contains("{e}") && !msg.contains("{SERVE_USAGE}"), "{msg}");
+        assert!(!msg.contains("secret-in-file"), "{msg}");
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn parse_serve_args_password_file_unreadable() {
+        // Owner without read permission: mode 0o200 passes the group/other check but cannot be read
+        // (unless the tests run as root, which bypasses file permissions).
+        let (dir, path) = password_file("unreadable", "pw\n", 0o200);
+        let is_root = std::fs::File::open(&path).is_ok();
+        if !is_root {
+            let err = parse_serve_args(&argv(&["--password-file", &path]), None)
+                .expect_err("unreadable file must be rejected");
+            assert!(err.contains(&path), "{err}");
+        }
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    use crate::SERVE_ENV_LOCK;
+
+    /// What a child spawned through `crate::host::command` sees for both password variables.
+    #[cfg(unix)]
+    fn child_sees_password_vars() -> String {
+        let out = crate::host::command("sh")
+            .arg("-c")
+            .arg("printf %s \"${VELA_SERVE_PASSWORD-unset}|${VLX_SERVE_PASSWORD-unset}\"")
+            .output()
+            .expect("sh must run");
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+
+    #[test]
+    fn take_serve_password_env_scrubs_both_variables() {
+        let _guard = SERVE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_new = std::env::var_os(SERVE_PASSWORD_ENV);
+        let saved_legacy = std::env::var_os(SERVE_PASSWORD_ENV_LEGACY);
+
+        std::env::set_var(SERVE_PASSWORD_ENV, "new-pw");
+        std::env::set_var(SERVE_PASSWORD_ENV_LEGACY, "legacy-pw");
+        // Control: before the scrub a child inherits both, so the assertion below discriminates.
+        #[cfg(unix)]
+        assert_eq!(child_sees_password_vars(), "new-pw|legacy-pw");
+
+        // The new name wins, and both are gone from this process and from every child afterwards.
+        assert_eq!(take_serve_password_env().as_deref(), Some("new-pw"));
+        assert!(std::env::var_os(SERVE_PASSWORD_ENV).is_none());
+        assert!(std::env::var_os(SERVE_PASSWORD_ENV_LEGACY).is_none());
+        #[cfg(unix)]
+        assert_eq!(child_sees_password_vars(), "unset|unset");
+
+        // Only the legacy name set: it is the fallback and is removed too.
+        std::env::set_var(SERVE_PASSWORD_ENV_LEGACY, "legacy-pw");
+        assert_eq!(take_serve_password_env().as_deref(), Some("legacy-pw"));
+        assert!(std::env::var_os(SERVE_PASSWORD_ENV_LEGACY).is_none());
+        // Nothing set: nothing returned.
+        assert_eq!(take_serve_password_env(), None);
+
+        // Restore whatever the test process started with.
+        for (key, saved) in [(SERVE_PASSWORD_ENV, saved_new), (SERVE_PASSWORD_ENV_LEGACY, saved_legacy)] {
+            match saved {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+
+    #[test]
+    fn serve_startup_env_scrubs_before_the_login_shell_probe() {
+        let _guard = SERVE_ENV_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let saved_new = std::env::var_os(SERVE_PASSWORD_ENV);
+        let saved_legacy = std::env::var_os(SERVE_PASSWORD_ENV_LEGACY);
+
+        // Launcher passes the password (SSH connect mode, Electron sidecar, a service unit). The stand-in
+        // for hydrate records what its child, the first one of the process, inherits.
+        std::env::set_var(SERVE_PASSWORD_ENV, "launcher-pw");
+        std::env::set_var(SERVE_PASSWORD_ENV_LEGACY, "legacy-pw");
+        let mut probe_saw = None;
+        let got = serve_startup_env(|| {
+            #[cfg(unix)]
+            {
+                probe_saw = Some(child_sees_password_vars());
+            }
+        });
+        assert_eq!(got.as_deref(), Some("launcher-pw"));
+        #[cfg(unix)]
+        assert_eq!(probe_saw.as_deref(), Some("unset|unset"));
+        assert!(std::env::var_os(SERVE_PASSWORD_ENV).is_none());
+        assert!(std::env::var_os(SERVE_PASSWORD_ENV_LEGACY).is_none());
+
+        // A startup file exports its own value and hydrate copies it back: it wins, as before, and is
+        // scrubbed again so later children do not see it.
+        std::env::set_var(SERVE_PASSWORD_ENV, "launcher-pw");
+        let got = serve_startup_env(|| std::env::set_var(SERVE_PASSWORD_ENV, "profile-pw"));
+        assert_eq!(got.as_deref(), Some("profile-pw"));
+        assert!(std::env::var_os(SERVE_PASSWORD_ENV).is_none());
+        #[cfg(unix)]
+        assert_eq!(child_sees_password_vars(), "unset|unset");
+
+        // Nothing set anywhere: no password.
+        assert_eq!(serve_startup_env(|| {}), None);
+
+        for (key, saved) in [(SERVE_PASSWORD_ENV, saved_new), (SERVE_PASSWORD_ENV_LEGACY, saved_legacy)] {
+            match saved {
+                Some(v) => std::env::set_var(key, v),
+                None => std::env::remove_var(key),
+            }
+        }
+    }
+
+    #[test]
+    fn parse_serve_args_bind_flag() {
+        use crate::web::BindChoice;
+        let bind = |v: &str| {
+            parse_serve_args(&argv(&["--bind", v, "--password", "pw"]), None)
+                .expect("parsing should succeed")
+                .bind
+        };
+        assert_eq!(bind("all"), Some(BindChoice::All));
+        assert_eq!(bind("loopback"), Some(BindChoice::Loopback));
+        assert_eq!(
+            bind("100.100.83.2"),
+            Some(BindChoice::Address("100.100.83.2".parse().unwrap()))
+        );
+        // Without the flag the persisted setting stays in charge.
+        let got = parse_serve_args(&argv(&["--password", "pw"]), None).expect("parsing should succeed");
+        assert_eq!(got.bind, None);
+        // --lan-http may choose its address.
+        let got = parse_serve_args(&argv(&["--lan-http", "--bind", "192.168.1.5", "--password", "pw"]), None)
+            .expect("parsing should succeed");
+        assert_eq!(got.bind, Some(BindChoice::Address("192.168.1.5".parse().unwrap())));
+    }
+
+    #[test]
+    fn parse_serve_args_rejects_bad_bind() {
+        assert!(parse_serve_args(&argv(&["--password", "pw", "--bind"]), None).is_err());
+        assert!(parse_serve_args(&argv(&["--bind", "", "--password", "pw"]), None).is_err());
+        for bad in ["nonsense", "::1", "224.0.0.1", "10.0.0.1:80"] {
+            let err = parse_serve_args(&argv(&["--bind", bad, "--password", "pw"]), None).unwrap_err();
+            assert!(err.starts_with("--bind has invalid value"), "{bad}: {err}");
+        }
+    }
+
+    /// --local-http treats every client as local, so --bind must never widen it beyond loopback.
+    #[test]
+    fn parse_serve_args_local_http_never_widens() {
+        for wide in ["all", "192.168.1.5"] {
+            assert!(
+                parse_serve_args(&argv(&["--local-http", "--bind", wide, "--password", "pw"]), None).is_err(),
+                "--local-http --bind {wide} must be rejected"
+            );
+        }
+        let got = parse_serve_args(&argv(&["--local-http", "--bind", "loopback", "--password", "pw"]), None)
+            .expect("--local-http --bind loopback is consistent");
+        assert!(got.local_http);
+    }
+
+    #[test]
+    fn describe_listen_error_is_english_prose() {
+        let msg = describe_listen_error("remote_bind_unavailable:192.0.2.10");
+        assert!(msg.starts_with("listen address 192.0.2.10 is not present"), "{msg}");
+        assert!(!msg.contains("remote_bind"), "{msg}");
+        let msg = describe_listen_error("remote_bind_invalid:bogus");
+        assert!(msg.contains("\"bogus\"") && !msg.contains("remote_bind"), "{msg}");
+        let msg = describe_listen_error("remote_pairing_host_invalid:a/b");
+        assert!(msg.contains("\"a/b\"") && !msg.contains("remote_pairing"), "{msg}");
+        // Unrelated errors pass through unchanged.
+        assert_eq!(describe_listen_error("Port 8799 is already in use: x"), "Port 8799 is already in use: x");
+    }
+
     #[test]
     fn serve_data_dir_prefers_explicit() {
         let args = ServeArgs {
@@ -2246,6 +2760,7 @@ mod tests {
             print_pairing: false,
             mirror: None,
             relay_only: false,
+            bind: None,
         };
         assert_eq!(
             serve_data_dir(&args, "io.vlinx.vlxterm").unwrap(),

@@ -35,7 +35,6 @@ use serde_json::{json, Value};
 use super::antigravity_protocol;
 
 mod acp;
-pub use acp::GROK_MODELS_SETTING;
 mod antigravity_tasks;
 mod auth;
 mod claude_identity;
@@ -2361,8 +2360,16 @@ impl ChatManager {
                 updated_input.as_ref(), message, updated_permissions.as_ref());
         }
         if acp_protocol::supported(proc.kind) {
-            return acp::respond(app, session_id, &proc, request_id, allow, updated_input.as_ref(), message,
-                updated_permissions.as_ref());
+            return acp::respond(
+                app,
+                session_id,
+                &proc,
+                request_id,
+                allow,
+                updated_input.as_ref(),
+                message,
+                updated_permissions.as_ref(),
+            );
         }
         // Claim the request so a late answer from another client is refused, and put it back when this
         // answer could not be delivered, so the person can answer again.

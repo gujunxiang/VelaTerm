@@ -36,6 +36,7 @@ import {
   DEFAULT_TERMINAL_LINE_HEIGHT,
   MAX_CHAT_TRACKING,
   MIN_CHAT_TRACKING,
+  SETTINGS_TABS,
 } from "../../theme";
 import type {
   AccentChoice,
@@ -43,6 +44,7 @@ import type {
   DividerStyle,
   NavLayout,
   PaneStyle,
+  SettingsTab,
 } from "../../theme";
 import { Field, Seg, SectionTitle } from "./settingsParts";
 import {
@@ -373,7 +375,7 @@ function AccentPicker({
 }
 
 
-type Cat = "appearance" | "terminal" | "conversation" | "translation" | "behavior" | "advanced" | "agents" | "shortcuts" | "general";
+type Cat = SettingsTab | "translation";
 
 const CATS = new Set<Cat>([
   "general",
@@ -462,8 +464,18 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
   const legacyTranslation = route.get("settings") === "conversation" && route.get("settingsSection") === "translation";
   const requestedCategory = legacyTranslation ? "translation" : categoryOf(route.get("settings"));
   const showTranslation = route.get("settingsTranslation") === "1" || requestedCategory === "translation";
-  const [cat, setCat] = useState<Cat>(requestedCategory ?? "appearance");
-  useEffect(() => { if (requestedCategory) setCat(requestedCategory); }, [requestedCategory]);
+  // The section lives in local state so switching panels does not go through settings persistence; the
+  // store only seeds it on open and records each change, so Settings reopens where it was left.
+  // Translation is not recorded: it is listed only when the route asks for it, so reopening on it would
+  // show a panel with no entry in the list.
+  const savedTab = useTermStore((s) => s.settingsTab);
+  const setSettingsTab = useTermStore((s) => s.setSettingsTab);
+  const [cat, setCatLocal] = useState<Cat>((requestedCategory as Cat) || savedTab);
+  const setCat = (v: Cat) => {
+    setCatLocal(v);
+    if ((SETTINGS_TABS as readonly string[]).includes(v)) setSettingsTab(v as SettingsTab);
+  };
+  useEffect(() => { if (requestedCategory) setCat(requestedCategory as Cat); }, [requestedCategory]);
   useEffect(() => { if (legacyTranslation) navigateTranslation(translationUrl({ settings: "translation", settingsSection: null }), true); }, [legacyTranslation]);
   const [skillOn, setSkillOn] = useState<boolean | null>(null);
   const [cliStatus, setCliStatus] = useState<VelaCommandStatus | null>(null);
@@ -830,7 +842,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
               <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
                 <div>
                   <SectionTitle>{t("settings.catBehavior")}</SectionTitle>
-                  <Field label={t("settings.tabs")}>
+                  <Field label={t("settings.tabs")} hint={t("settings.tabsHint")}>
                     <Seg<"single" | "multi">
                       value={singleTabMode ? "single" : "multi"}
                       options={[
@@ -840,7 +852,7 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                       onChange={(v) => setSingleTabMode(v === "single")}
                     />
                   </Field>
-                  <Field label={t("settings.dynamicStatusFilter")}>
+                  <Field label={t("settings.dynamicStatusFilter")} hint={t("settings.dynamicStatusFilterHint")}>
                     <Seg<"on" | "off">
                       value={dynamicStatusFilter ? "on" : "off"}
                       options={[
@@ -851,20 +863,15 @@ export function SettingsModal({ onClose }: { onClose: () => void }) {
                     />
                   </Field>
                   {singleTabMode && (
-                    <Field label={t("settings.maxLiveTabs")}>
-                      <Select
+                    <Field label={t("settings.maxLiveTabs")} hint={t("settings.maxLiveTabsHint")}>
+                      <Seg<string>
                         value={String(maxLiveTabs)}
-                        options={MAX_LIVE_TABS_CHOICES.map((n) => ({ value: String(n), label: String(n) }))}
+                        options={MAX_LIVE_TABS_CHOICES.map((n) => [String(n), String(n)] as [string, string])}
                         onChange={(v) => setMaxLiveTabs(Number(v))}
-                        size="sm"
-                        width={160}
-                        menuWidth={172}
-                        align="right"
-                        ariaLabel={t("settings.maxLiveTabs")}
                       />
                     </Field>
                   )}
-                  <Field label={t("settings.spawnConfirm")}>
+                  <Field label={t("settings.spawnConfirm")} hint={t("settings.spawnConfirmHint")}>
                     <Seg<"on" | "off">
                       value={spawnConfirm ? "on" : "off"}
                       options={[

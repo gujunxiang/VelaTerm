@@ -289,9 +289,9 @@ pub struct Catalog {
     pub models_from_state: bool,
     /// Raw `models.availableModels` reported on session open, kept even when `configOptions` replaces `models`.
     pub state_models: Vec<Choice>,
-    /// Live `thought_level` option ids observed per active model id during this session. Grok states a
-    /// different reasoning ladder for every model under `_meta.reasoningEfforts`; the flat `efforts`
-    /// above can only name one of them.
+    /// Reasoning levels each model states for itself, by model id. Grok declares a different ladder per
+    /// model under `_meta.reasoningEfforts`; the flat `efforts` below can only name the active one's.
+    /// Entries filled from a live `thought_level` option are the same idea from the other source.
     pub model_efforts: HashMap<String, Vec<String>>,
     pub efforts: Vec<Choice>,
     pub effort: Option<String>,
@@ -314,22 +314,23 @@ impl Catalog {
             self.mode = modes.get("currentModeId").and_then(Value::as_str).map(str::to_string);
         }
         if let Some(models) = result.get("models").filter(|models| models.is_object()) {
-            let listed: Vec<Choice> = distinct(models.get("availableModels").and_then(Value::as_array).into_iter().flatten()
+            let available = models.get("availableModels").and_then(Value::as_array);
+            let listed: Vec<Choice> = distinct(available.into_iter().flatten()
                 .filter_map(|model| choice(model, "modelId")).collect());
-            // Grok names each model's own reasoning ladder under `_meta.reasoningEfforts`. Keep it so the
-            // picker offers the ladder of the model actually chosen instead of one borrowed from another.
-            for model in models.get("availableModels").and_then(Value::as_array).into_iter().flatten() {
-                let Some(id) = model.get("modelId").and_then(Value::as_str) else { continue };
-                let levels: Vec<String> = model.pointer("/_meta/reasoningEfforts").and_then(Value::as_array).into_iter().flatten()
-                    .filter_map(|level| level.get("id").or_else(|| level.get("value")).and_then(Value::as_str))
-                    .filter(|level| !level.is_empty()).map(str::to_string).collect();
-                let levels = distinct_levels(levels);
-                if !levels.is_empty() { self.model_efforts.insert(id.to_string(), levels); }
-            }
             if !listed.is_empty() {
                 self.state_models = listed.clone();
                 self.models = listed;
                 self.models_from_state = true;
+            }
+            // Keep each model's own ladder, so the picker offers the levels of the model actually chosen
+            // instead of one borrowed from whatever the session started with.
+            for model in available.into_iter().flatten() {
+                let Some(id) = model.get("modelId").and_then(Value::as_str) else { continue };
+                let levels = distinct_levels(model.pointer("/_meta/reasoningEfforts").and_then(Value::as_array)
+                    .into_iter().flatten()
+                    .filter_map(|level| level.get("id").or_else(|| level.get("value")).and_then(Value::as_str))
+                    .map(str::to_string).collect());
+                if !levels.is_empty() { self.model_efforts.insert(id.to_string(), levels); }
             }
             self.model = models.get("currentModelId").and_then(Value::as_str).map(str::to_string).or(self.model.take());
         }
@@ -374,7 +375,12 @@ impl Catalog {
         }
         if saw_model || saw_effort {
             if let Some(model) = &self.model {
-                self.model_efforts.insert(model.clone(), self.efforts.iter().map(|c| c.id.clone()).collect());
+                let levels: Vec<String> = self.efforts.iter().map(|c| c.id.clone()).collect();
+                // A ladder the model stated under `_meta` survives an option that names no levels: that
+                // means this model offers none to switch here, not that its ladder is unknown.
+                if !levels.is_empty() || !self.model_efforts.contains_key(model) {
+                    self.model_efforts.insert(model.clone(), levels);
+                }
             }
         }
     }
@@ -506,8 +512,30 @@ fn option_of(options: Option<&Value>, kinds: &[&str]) -> Option<String> {
         .and_then(|option| option.get("optionId").and_then(Value::as_str)).map(str::to_string)
 }
 
-// Grok's own requests for a dialog, which its terminal draws and an error answer cancels. Each is kept
-// with its method under `GROK_METHOD`, so the answer can take that method's shape.
+pub fn permission_outcome(id: &Value, option: Option<&str>) -> Value {
+    response(id, match option {
+        Some(option) => json!({"outcome":{"outcome":"selected","optionId":option}}),
+        None => json!({"outcome":{"outcome":"cancelled"}}),
+    })
+}
+
+/// Whether the agent reports that the conversation it was asked to reopen is gone — its directory, its
+/// recording, or the session itself no longer exists there.
+///
+/// Deliberately narrow: a protocol error, a crashed server, or a missing binary all mean something else,
+/// and treating those as "gone" would silently replace a conversation the agent still has.
+pub fn conversation_missing(error: &Value) -> bool {
+    let code = error.pointer("/data/code").and_then(Value::as_str).unwrap_or_default().to_ascii_uppercase();
+    if ["NOT_FOUND", "ENOENT", "NO_SUCH"].iter().any(|token| code.contains(token)) { return true; }
+    let text = error_text(error).to_ascii_lowercase();
+    ["path not found", "no such file", "session not found", "conversation not found",
+        "session does not exist", "unknown session", "session is not known"]
+        .iter().any(|token| text.contains(token))
+}
+
+// Grok asks the client for its dialogs through `_x.ai/...` requests, which its own terminal draws and
+// answers in a shape of its own. Each request is kept with the method that sent it, so the answer can
+// take that method's form.
 
 /// The plan Grok wants approved before it leaves plan mode.
 pub const EXIT_PLAN_MODE: &str = "_x.ai/exit_plan_mode";
@@ -515,87 +543,75 @@ pub const EXIT_PLAN_MODE: &str = "_x.ai/exit_plan_mode";
 pub const ASK_USER_QUESTION: &str = "_x.ai/ask_user_question";
 /// An MCP server asking for input while one of its tools runs.
 pub const MCP_ELICIT: &str = "_x.ai/mcp/elicit";
-/// Where a stored request records which of these it is.
-const GROK_METHOD: &str = "_grokMethod";
 
-/// The view's card for one of Grok's dialog requests, and the parameters to keep for answering it.
-/// `None` when the method is not one of them.
-pub fn grok_dialog(kind: SessionKind, card: &str, method: &str, params: &Value) -> Option<(Value, Value)> {
-    let payload = match method {
-        EXIT_PLAN_MODE => {
-            let plan = params.get("planContent").and_then(Value::as_str).unwrap_or("");
-            json!({"id": card, "tool_name": "ExitPlanMode", "display_name": label(kind), "input": {"plan": plan}})
-        }
-        ASK_USER_QUESTION => {
-            // The question card wants a header per question, which Grok's questions do not always carry.
-            let questions: Vec<Value> = params.get("questions").and_then(Value::as_array).into_iter().flatten()
-                .enumerate().map(|(i, question)| {
-                    let mut question = question.clone();
-                    if question.get("header").and_then(Value::as_str).is_none_or(str::is_empty) {
-                        question["header"] = json!(format!("Q{}", i + 1));
-                    }
-                    if !question.get("options").is_some_and(Value::is_array) { question["options"] = json!([]); }
-                    question
-                }).collect();
-            json!({"id": card, "tool_name": "AskUserQuestion", "display_name": label(kind), "input": {"questions": questions}})
-        }
-        MCP_ELICIT => json!({
+/// The card one of Grok's dialog requests shows, or `None` when the method is not one of them.
+pub fn grok_dialog(kind: SessionKind, card: &str, method: &str, params: &Value) -> Option<Value> {
+    match method {
+        EXIT_PLAN_MODE => Some(json!({
             "id": card,
-            "subtype": "elicitation",
-            "tool_name": "MCP",
+            "tool_name": "ExitPlanMode",
             "display_name": label(kind),
-            "mcp_server_name": params.get("serverName").cloned().unwrap_or(Value::Null),
-            "message": params.get("message").cloned().unwrap_or(Value::Null),
-            "mode": if params.get("mode").and_then(Value::as_str) == Some("url") { "url" } else { "form" },
-            "url": params.get("url").cloned().unwrap_or(Value::Null),
-            "requested_schema": params.get("requestedSchema").cloned().unwrap_or(Value::Null),
-            "input": {"server": params.get("serverName").cloned().unwrap_or(Value::Null)},
-        }),
-        _ => return None,
-    };
-    let mut stored = params.clone();
-    stored[GROK_METHOD] = json!(method);
-    Some((payload, stored))
+            "input": {"plan": params.get("planContent").and_then(Value::as_str).unwrap_or("")},
+        })),
+        ASK_USER_QUESTION => Some(json!({
+            "id": card,
+            "tool_name": "AskUserQuestion",
+            "display_name": label(kind),
+            "input": {"questions": grok_questions(params)},
+        })),
+        MCP_ELICIT => Some(elicitation_payload(kind, card, params)),
+        _ => None,
+    }
 }
 
-/// Which of Grok's dialog requests stored parameters belong to, if any.
-pub fn grok_method(params: &Value) -> Option<&str> {
-    params.get(GROK_METHOD).and_then(Value::as_str)
+/// Grok's questions in the shape the question form reads: a header per question and an options array,
+/// both of which Grok omits for a plain free-text question.
+fn grok_questions(params: &Value) -> Vec<Value> {
+    params.get("questions").and_then(Value::as_array).into_iter().flatten().enumerate()
+        .map(|(index, question)| {
+            let mut question = question.clone();
+            if question.get("header").and_then(Value::as_str).is_none_or(str::is_empty) {
+                question["header"] = json!(format!("Q{}", index + 1));
+            }
+            if !question.get("options").is_some_and(Value::is_array) {
+                question["options"] = json!([]);
+            }
+            question
+        })
+        .collect()
 }
 
-/// The person's answer to one of Grok's dialog requests.
+/// The answer to one of Grok's dialogs, in that method's own shape.
 ///
-/// A plan is `approved` (Grok leaves plan mode) or `rejected` (it keeps planning). Questions are
-/// `accepted` with answers keyed by question text, taken from the card's `answers`; dismissing them is
-/// `skip_interview`. An MCP form is `accept` with its content, `decline`, or `cancel`.
-pub fn grok_dialog_answer(id: &Value, method: &str, allow: bool, updated_input: Option<&Value>, message: Option<&str>) -> Value {
+/// A plan is `approved` (Grok leaves plan mode by itself) or `rejected`. Questions are `accepted` with
+/// the answers keyed by question text, or `skip_interview` when the person dismissed them. An MCP form is
+/// `accept` with its content, `decline`, or `cancel`.
+pub fn grok_dialog_answer(
+    id: &Value,
+    method: &str,
+    allow: bool,
+    updated_input: Option<&Value>,
+    message: Option<&str>,
+) -> Value {
     response(id, match method {
         EXIT_PLAN_MODE => json!({"outcome": if allow { "approved" } else { "rejected" }}),
         ASK_USER_QUESTION if allow => json!({"outcome": "accepted",
             "answers": updated_input.and_then(|input| input.get("answers")).cloned().unwrap_or_else(|| json!({}))}),
         ASK_USER_QUESTION => json!({"outcome": "skip_interview"}),
-        _ if allow => match updated_input {
-            Some(content) => json!({"outcome": "accept", "content": content}),
-            None => json!({"outcome": "accept"}),
-        },
-        _ => json!({"outcome": if message == Some("cancel") { "cancel" } else { "decline" }}),
+        _ if !allow => json!({"outcome": if message == Some("cancel") { "cancel" } else { "decline" }}),
+        // A URL elicitation asks the person to finish something in the browser and say so; there is no
+        // content to send back, only the acknowledgement.
+        _ if updated_input.is_none() => json!({"outcome": "accept"}),
+        _ => json!({"outcome": "accept", "content": updated_input.cloned().unwrap_or_else(|| json!({}))}),
     })
 }
 
-/// The answer to a request left open when its turn is cancelled: nothing approved or answered.
-pub fn cancelled_outcome(id: &Value, params: &Value) -> Value {
-    match grok_method(params) {
-        Some(EXIT_PLAN_MODE) => response(id, json!({"outcome": "rejected"})),
-        Some(ASK_USER_QUESTION) => response(id, json!({"outcome": "skip_interview"})),
-        Some(_) => response(id, json!({"outcome": "cancel"})),
-        None => permission_outcome(id, None),
-    }
-}
-
-pub fn permission_outcome(id: &Value, option: Option<&str>) -> Value {
-    response(id, match option {
-        Some(option) => json!({"outcome":{"outcome":"selected","optionId":option}}),
-        None => json!({"outcome":{"outcome":"cancelled"}}),
+/// The answer to one of Grok's dialogs left open when its turn ended: nothing approved or answered.
+pub fn grok_cancelled_outcome(id: &Value, method: &str) -> Value {
+    response(id, match method {
+        EXIT_PLAN_MODE => json!({"outcome": "rejected"}),
+        ASK_USER_QUESTION => json!({"outcome": "skip_interview"}),
+        _ => json!({"outcome": "cancel"}),
     })
 }
 
@@ -1747,6 +1763,42 @@ mod tests {
     }
 
     #[test]
+    fn only_a_missing_conversation_counts_as_one() {
+        // Grok reports the lost session directory this way.
+        assert!(conversation_missing(&json!({"code":-32603,"message":"Path not found.","data":{"code":"FS_NOT_FOUND"}})));
+        assert!(conversation_missing(&json!({"code":-32000,"message":"Session not found"})));
+        assert!(conversation_missing(&json!({"code":-32603,"message":"no such file or directory","data":{"code":"ENOENT"}})));
+        // Everything else is a real failure, not a conversation to replace.
+        assert!(!conversation_missing(&json!({"code":-32602,"message":"Invalid params"})));
+        assert!(!conversation_missing(&json!({"code":-32603,"message":"Authentication required"})));
+        assert!(!conversation_missing(&json!({"code":-32000,"message":"command not found"})));
+        assert!(!conversation_missing(&json!({"code":-32000,"message":"model not found"})));
+    }
+
+    #[test]
+    fn each_model_keeps_its_own_reasoning_ladder() {
+        let mut catalog = Catalog::default();
+        catalog.absorb_session(&json!({
+            "models":{"currentModelId":"a","availableModels":[
+                {"modelId":"a","name":"A","_meta":{"reasoningEfforts":[{"id":"none"},{"id":"low"},{"id":"high"},{"id":"max"}]}},
+                {"modelId":"b","name":"B","_meta":{"reasoningEfforts":[{"id":"high"},{"id":"medium"},{"id":"low"},{"id":"high"}]}},
+                {"modelId":"c","name":"C"}
+            ]},
+            "configOptions":[{"type":"select","id":"reasoning_effort","category":"thought_level","currentValue":"low",
+                "options":[{"value":"none","name":"None"},{"value":"low","name":"Low"}]}]
+        }));
+        assert_eq!(catalog.model_efforts["b"], ["high", "medium", "low"]);
+        assert!(!catalog.model_efforts.contains_key("c"));
+        // The opening `thought_level` option is what this session can actually switch for its own model,
+        // so it wins over the model's wider `_meta` ladder.
+        assert_eq!(catalog.model_efforts["a"], ["none", "low"]);
+        // Switching models without a `thought_level` option leaves the stated ladders alone.
+        catalog.absorb_options(&[json!({"type":"select","id":"model","category":"model","currentValue":"b",
+            "options":[{"value":"a","name":"A"},{"value":"b","name":"B"}]})]);
+        assert_eq!(catalog.model_efforts["b"], ["high", "medium", "low"]);
+    }
+
+    #[test]
     fn the_catalog_reads_states_and_config_options() {
         let mut catalog = Catalog::default();
         catalog.absorb_session(&json!({
@@ -1780,26 +1832,6 @@ mod tests {
         let mut legacy = Catalog::default();
         legacy.absorb_session(&json!({"models":{"availableModels":[{"modelId":"g1","name":"G1"},{"modelId":"g2","name":"G2"}],"currentModelId":"g1"}}));
         assert!(legacy.model_switchable() && legacy.models_from_state);
-    }
-
-    #[test]
-    fn each_model_keeps_its_own_reasoning_ladder() {
-        let mut catalog = Catalog::default();
-        catalog.absorb_session(&json!({
-            "models":{"currentModelId":"a","availableModels":[
-                {"modelId":"a","name":"A","_meta":{"reasoningEfforts":[{"id":"none"},{"id":"low"},{"id":"high"},{"id":"max"}]}},
-                {"modelId":"b","name":"B","_meta":{"reasoningEfforts":[{"id":"high"},{"id":"medium"},{"id":"low"},{"id":"high"}]}},
-                {"modelId":"c","name":"C"}
-            ]},
-            "configOptions":[{"type":"select","id":"reasoning_effort","category":"thought_level","currentValue":"low",
-                "options":[{"value":"none","name":"None"},{"value":"low","name":"Low"}]}]
-        }));
-        assert_eq!(catalog.model_efforts["a"], ["none", "low", "high", "max"]);
-        // Duplicates are dropped, and the order the model stated is kept.
-        assert_eq!(catalog.model_efforts["b"], ["high", "medium", "low"]);
-        assert!(!catalog.model_efforts.contains_key("c"));
-        // The session-wide ladder still names the current model's levels.
-        assert_eq!(catalog.efforts.iter().map(|c| c.id.as_str()).collect::<Vec<_>>(), ["none", "low"]);
     }
 
     #[test]

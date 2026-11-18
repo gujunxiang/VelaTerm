@@ -567,12 +567,16 @@ const ru: typeof en = {
   "settings.navTree": "Дерево", // Tree
   "settings.navCompact": "Компактно", // Compact
   "settings.tabs": "Вкладки", // Tabs
+  "settings.tabsHint": "«Одна» переиспользует одну и ту же вкладку для каждой открываемой сессии, а остальные продолжают работать в фоне. «Несколько» даёт каждой сессии собственную вкладку.", // Single reuses one tab for every session you open, keeping the others running in the background. Multi gives each session its own tab.
   "settings.dynamicStatusFilter": "Динамическое добавление в фильтр статуса",
+  "settings.dynamicStatusFilterHint": "Фильтр статуса сохраняет сессии, которые подходили в момент его применения. Если включено, добавляются и те, что начали подходить позже. Сессии никогда не убираются из списка при смене статуса.", // A status filter keeps the sessions that matched when you applied it. When on, sessions that begin matching later are added as well. Sessions are never removed as their status changes.
   "settings.tabSingle": "Одна", // Single
   "settings.tabMulti": "Несколько", // Multi
   "settings.maxLiveTabs": "Background limit", // Background limit
+  "settings.maxLiveTabsHint": "Сколько сессий продолжают работать в фоне в режиме одной вкладки. Сверх лимита закрывается самая давняя неактивная сессия; работающие, ожидающие вашего ответа и с непрочитанным уведомлением сохраняются.", // How many sessions keep running in the background in single-tab mode. Beyond the limit the oldest idle session is closed; ones that are working, waiting for you, or holding an unread notification are kept.
   "settings.defaultShell": "Shell по умолчанию", // Default shell
   "settings.spawnConfirm": "Confirm before spawn", // Confirm before spawn
+  "settings.spawnConfirmHint": "Относится к сессиям, которые агент порождает через vspawn, а не к вкладкам, открытым вами. Если включено, запрос можно просмотреть и отредактировать до запуска сессии.", // Applies to sessions an agent derives with vspawn, not to tabs you open yourself. When on, you can review and edit the prompt before the session starts.
   "settings.usageAuto": "Usage auto-refresh", // Usage auto-refresh
   "settings.usageRefresh": "Usage refresh", // Usage refresh
   "settings.autoContinue": "Продолжать после сброса лимита", // Continue after limit resets
@@ -870,7 +874,7 @@ const ru: typeof en = {
   "settings.fontPreviewChat": "Страница настроек обновлена. Каждый параметр шрифта применяется сразу, а значения по умолчанию можно восстановить в любой момент.",
   "settings.fontResetGroup": "Восстановить шрифты по умолчанию",
   "settings.composerChips": "Панель инструментов ввода",
-  "settings.composerChipsHint": "Включённые элементы отображаются рядом с сообщением в указанном порядке. Если функция временно недоступна (агент не запущен, нет фоновых задач или вход в аккаунт ещё не завершён), её элемент остаётся видимым, но пустым или неактивным. Функции, которые текущий агент не поддерживает, не отображаются. Элементы, для которых не хватает места, перемещаются в меню «Ещё». Выключенные здесь элементы отображаются только в этом меню; их настройки по-прежнему доступны здесь.",
+  "settings.composerChipsHint": "Включённые элементы отображаются рядом с сообщением в указанном порядке. Если функция временно недоступна (агент не запущен, нет фоновых задач или вход в аккаунт ещё не завершён), её элемент остаётся видимым, но пустым или неактивным. Функции, которые текущий агент не поддерживает, не отображаются. Элементы, для которых не хватает места, перемещаются в меню «Ещё». Выключенные здесь элементы нигде не отображаются, пока вы снова их не включите.",
   "settings.composerChipUp": (chip: string) => `Переместить «${chip}» вверх`,
   "settings.composerChipDown": (chip: string) => `Переместить «${chip}» вниз`,
   "settings.composerChip.model": "Модель",
@@ -1016,6 +1020,19 @@ const ru: typeof en = {
   "remote.mirror": "Зеркалировать раскладку на всех устройствах", // Mirror layout across devices
   "remote.mirrorHint":
     "Вкладки, разделения и активная сессия одинаковы на всех подключённых устройствах. Фокус клавиатуры на каждом остаётся на месте.", // Tabs, splits, and the active session stay the same on every connected device. Keyboard focus stays put on each one.
+  "remote.listenLabel": "Прослушивать на", // Listen on
+  "remote.listenAll": "Все сети", // All networks
+  "remote.listenLoopback": "Только этот компьютер (туннель)", // This computer only (tunnel)
+  "remote.listenUnavailable": (ip: string) => `${ip} (недоступно)`, // ${ip} (not available)
+  "remote.reachAll": "Доступно из любой сети, к которой подключён этот компьютер.", // Reachable from every network this computer is connected to.
+  "remote.reachOnly": (addr: string) => `Доступно только по адресу ${addr}.`, // Reachable only at ${addr}.
+  "remote.reachTunnel": "Доступно только через туннель или прокси на этом компьютере, например tailscale serve или ssh -L.", // Reachable only through a tunnel or proxy on this computer, for example tailscale serve or ssh -L.
+  "remote.pairingHostLabel": "Адрес для ссылок сопряжения", // Address for pairing links
+  "remote.pairingHostPlaceholder": "host.tailnet.ts.net", // host.tailnet.ts.net
+  "remote.pairingHostNeeded": "Клиенты подключаются к этому компьютеру через туннель. Укажите имя хоста или IP-адрес, которые они используют. Без этого ссылки сопряжения указывают на 127.0.0.1, что работает только с ssh -L.", // Clients reach this computer through a tunnel. Enter the host name or IP they use. Without it, pairing links point to 127.0.0.1, which only works with ssh -L.
+  "remote.bindInvalid": (value: string) => `«${value}» — недопустимый адрес прослушивания. Выберите все сети, только этот компьютер или IPv4-адрес этого компьютера.`, // "${value}" is not a valid listen address. Choose all networks, this computer only, or an IPv4 address of this computer.
+  "remote.bindUnavailable": (ip: string) => `Адрес ${ip} недоступен на этом компьютере. Подключите сеть или VPN либо выберите другой адрес. Удалённый доступ никогда не переключается на все сети.`, // The address ${ip} is not available on this computer. Connect the network or VPN, or choose another address. Remote access never falls back to all networks.
+  "remote.pairingHostInvalid": (value: string) => `«${value}» — недопустимый адрес для ссылок сопряжения. Укажите имя хоста или IPv4-адрес без схемы, порта и пути.`, // "${value}" is not a valid address for pairing links. Enter a host name or an IPv4 address, without scheme, port, or path.
 
   // ── Remote connection panel ──
   "connect.wslUpgrade": "В этом рабочем пространстве запущена другая версия сервера. Перезапуск сервера завершит все активные сессии в этом рабочем пространстве WSL.",
@@ -1629,6 +1646,7 @@ const ru: typeof en = {
   "files.nameLabel": "Имя", // Name
   "files.newTooltip": "Новый файл или папка", // New file or folder
   "files.openInTerminal": "Open in Terminal",
+  "files.collapseAll": "Свернуть все", // Collapse All
   "files.revealInFinder": "Show in File Manager",
   "files.copyPath": "Copy Path",
   "files.copyRelPath": "Copy Relative Path",
@@ -2660,6 +2678,8 @@ const ru: typeof en = {
   "sidebarSection.nav": "Разделы боковой панели",
   "sidebarSection.noTasks": "Сессий задач пока нет.",
   "sidebarSection.noChats": "Сессий чата пока нет.",
+  "sidebarSection.setDefaultView": "Сделать видом по умолчанию",
+  "sidebarSection.clearDefaultView": "Снять вид по умолчанию",
   "artifact.comment": "Комментировать", // Comment
   "artifact.commentTitle": "Выберите элементы страницы, чтобы оставить комментарии для агента", // Click elements in the page to leave comments for the agent
   "artifact.pickHint": "Нажмите на элемент страницы, чтобы прокомментировать его. Esc — завершить.", // Click an element in the page to comment on it. Press Esc to stop.

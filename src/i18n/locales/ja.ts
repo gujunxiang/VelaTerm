@@ -557,12 +557,16 @@ const ja: typeof en = {
   "settings.navTree": "標準", // Tree
   "settings.navCompact": "コンパクト", // Compact
   "settings.tabs": "タブ", // Tabs
+  "settings.tabsHint": "「シングル」は開いたセッションごとに同じタブを再利用し、他はバックグラウンドで実行し続けます。「マルチ」は各セッションに専用のタブを与えます。", // Single reuses one tab for every session you open, keeping the others running in the background. Multi gives each session its own tab.
   "settings.dynamicStatusFilter": "状態フィルターへの動的追加",
+  "settings.dynamicStatusFilterHint": "状態フィルターは、適用した時点で一致していたセッションを保持します。オンにすると、後から一致し始めたセッションも追加されます。状態が変わってもセッションが除外されることはありません。", // A status filter keeps the sessions that matched when you applied it. When on, sessions that begin matching later are added as well. Sessions are never removed as their status changes.
   "settings.tabSingle": "シングル", // Single
   "settings.tabMulti": "マルチ", // Multi
   "settings.maxLiveTabs": "Background limit", // Background limit
+  "settings.maxLiveTabsHint": "単一タブモードでバックグラウンド実行を維持するセッション数です。上限を超えると最も古いアイドル状態のセッションが閉じられます。作業中・応答待ち・未読通知のあるセッションは保持されます。", // How many sessions keep running in the background in single-tab mode. Beyond the limit the oldest idle session is closed; ones that are working, waiting for you, or holding an unread notification are kept.
   "settings.defaultShell": "既定のシェル", // Default shell
   "settings.spawnConfirm": "Confirm before spawn", // Confirm before spawn
+  "settings.spawnConfirmHint": "自分で開くタブではなく、エージェントが vspawn で派生させるセッションに適用されます。オンにすると、セッション開始前にプロンプトを確認・編集できます。", // Applies to sessions an agent derives with vspawn, not to tabs you open yourself. When on, you can review and edit the prompt before the session starts.
   "settings.usageAuto": "Usage auto-refresh", // Usage auto-refresh
   "settings.usageRefresh": "Usage refresh", // Usage refresh
   "settings.autoContinue": "上限リセット後に自動再開", // Continue after limit resets
@@ -860,7 +864,7 @@ const ja: typeof en = {
   "settings.fontPreviewChat": "設定画面を更新しました。各フォント設定はすぐに反映され、いつでもデフォルトに戻せます。",
   "settings.fontResetGroup": "フォントをデフォルトに戻す",
   "settings.composerChips": "メッセージ入力ツールバー",
-  "settings.composerChipsHint": "有効にした項目は、この順序でメッセージの横に表示されます。エージェントが起動していない、バックグラウンドタスクがない、ログインが未完了など、機能が一時的に利用できない場合も、項目は空または無効の状態で表示されます。現在のエージェントが対応していない機能は表示されません。収まらない項目は「その他」メニューに移動します。ここでオフにした項目は、そのメニューにのみ表示され、設定は引き続きここで変更できます。",
+  "settings.composerChipsHint": "有効にした項目は、この順序でメッセージの横に表示されます。エージェントが起動していない、バックグラウンドタスクがない、ログインが未完了など、機能が一時的に利用できない場合も、項目は空または無効の状態で表示されます。現在のエージェントが対応していない機能は表示されません。収まらない項目は「その他」メニューに移動します。ここでオフにした項目は、再びオンにするまでどこにも表示されません。",
   "settings.composerChipUp": (chip: string) => `${chip}を上へ移動`,
   "settings.composerChipDown": (chip: string) => `${chip}を下へ移動`,
   "settings.composerChip.model": "モデル",
@@ -1007,6 +1011,19 @@ const ja: typeof en = {
   "remote.mirror": "デバイス間でレイアウトを同期", // Mirror layout across devices
   "remote.mirrorHint":
     "タブ・分割・アクティブなセッションが接続中のすべての端末で一致します。キーボードフォーカスは各端末でそのまま保たれます。", // Tabs, splits, and the active session stay the same on every connected device. Keyboard focus stays put on each one.
+  "remote.listenLabel": "待ち受け先", // Listen on
+  "remote.listenAll": "すべてのネットワーク", // All networks
+  "remote.listenLoopback": "このコンピューターのみ（トンネル）", // This computer only (tunnel)
+  "remote.listenUnavailable": (ip: string) => `${ip}（利用不可）`, // ${ip} (not available)
+  "remote.reachAll": "このコンピューターが接続しているすべてのネットワークからアクセスできます。", // Reachable from every network this computer is connected to.
+  "remote.reachOnly": (addr: string) => `${addr} からのみアクセスできます。`, // Reachable only at ${addr}.
+  "remote.reachTunnel": "このコンピューター上のトンネルまたはプロキシ経由でのみアクセスできます（tailscale serve や ssh -L など）。", // Reachable only through a tunnel or proxy on this computer, for example tailscale serve or ssh -L.
+  "remote.pairingHostLabel": "ペアリングリンクのアドレス", // Address for pairing links
+  "remote.pairingHostPlaceholder": "host.tailnet.ts.net", // host.tailnet.ts.net
+  "remote.pairingHostNeeded": "クライアントはトンネル経由でこのコンピューターに接続します。クライアントが使うホスト名または IP を入力してください。未入力の場合、ペアリングリンクは 127.0.0.1 を指し、ssh -L でのみ機能します。", // Clients reach this computer through a tunnel. Enter the host name or IP they use. Without it, pairing links point to 127.0.0.1, which only works with ssh -L.
+  "remote.bindInvalid": (value: string) => `「${value}」は有効な待ち受けアドレスではありません。すべてのネットワーク、このコンピューターのみ、またはこのコンピューターの IPv4 アドレスを選択してください。`, // "${value}" is not a valid listen address. Choose all networks, this computer only, or an IPv4 address of this computer.
+  "remote.bindUnavailable": (ip: string) => `アドレス ${ip} はこのコンピューターでは利用できません。ネットワークまたは VPN に接続するか、別のアドレスを選択してください。リモートアクセスがすべてのネットワークに切り替わることはありません。`, // The address ${ip} is not available on this computer. Connect the network or VPN, or choose another address. Remote access never falls back to all networks.
+  "remote.pairingHostInvalid": (value: string) => `「${value}」は有効なペアリングリンクのアドレスではありません。スキーム、ポート、パスを含めず、ホスト名または IPv4 アドレスを入力してください。`, // "${value}" is not a valid address for pairing links. Enter a host name or an IPv4 address, without scheme, port, or path.
 
   // ── Remote connection panel ──
   "connect.wslUpgrade": "このワークスペースでは別のバージョンのサーバーが動作しています。サーバーを再起動すると、この WSL ワークスペースで実行中のすべてのセッションが終了します。",
@@ -1614,6 +1631,7 @@ const ja: typeof en = {
   "files.nameLabel": "名前", // Name
   "files.newTooltip": "新規ファイル / フォルダ", // New file or folder
   "files.openInTerminal": "Open in Terminal",
+  "files.collapseAll": "すべて折りたたむ", // Collapse All
   "files.revealInFinder": "Show in File Manager",
   "files.copyPath": "Copy Path",
   "files.copyRelPath": "Copy Relative Path",
@@ -2636,6 +2654,8 @@ const ja: typeof en = {
   "sidebarSection.nav": "サイドバーのセクション",
   "sidebarSection.noTasks": "タスクセッションはまだありません。",
   "sidebarSection.noChats": "チャットセッションはまだありません。",
+  "sidebarSection.setDefaultView": "既定のビューに設定",
+  "sidebarSection.clearDefaultView": "既定のビューを解除",
   "artifact.comment": "コメント", // Comment
   "artifact.commentTitle": "ページの要素を選んで、エージェントへのコメントを残します", // Click elements in the page to leave comments for the agent
   "artifact.pickHint": "ページ内の要素をクリックしてコメントします。Esc で終了します。", // Click an element in the page to comment on it. Press Esc to stop.

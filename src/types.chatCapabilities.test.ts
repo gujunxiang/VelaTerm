@@ -17,7 +17,8 @@ describe("chat capabilities", () => {
   });
 
   it("offers images to every agent whose protocol can carry them", () => {
-    for (const kind of ["claude", "zcode", "opencode", "deepseek", "antigravity", "copilot", "cursor", "kimi", "grok"] as const) expect(acceptsChatImages(kind)).toBe(true);
+    for (const kind of ["claude", "zcode", "opencode", "deepseek", "antigravity", "copilot", "cursor", "kimi"] as const) expect(acceptsChatImages(kind)).toBe(true);
+    expect(acceptsChatImages("grok")).toBe(false);
   });
 
   it("keeps DeepSeek, which has no terminal interface, out of the terminal view", () => {

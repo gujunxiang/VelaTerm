@@ -404,22 +404,6 @@ fn serve_loop(server: tiny_http::Server, app: AppCtx, token: String) {
     );
 }
 
-/// Names this backend wrote from a session's first prompt, keyed by VelaTerm session id.
-///
-/// They let a later agent-authored title (Grok's own) replace that provisional name while it still
-/// needs to follow the conversation, without ever overwriting a name the user typed. A manual rename
-/// calls [`forget_provisional`] so its choice sticks.
-fn provisional() -> &'static std::sync::Mutex<HashMap<String, String>> {
-    static PROVISIONAL: std::sync::OnceLock<std::sync::Mutex<HashMap<String, String>>> =
-        std::sync::OnceLock::new();
-    PROVISIONAL.get_or_init(Default::default)
-}
-
-/// Drop the provisional marker for a session once the user names it, so agent titles stop overriding it.
-pub(crate) fn forget_provisional(sid: &str) {
-    provisional().lock().unwrap().remove(sid);
-}
-
 /// Rename an automatically numbered placeholder once from the first user message.
 ///
 /// Hooks and Codex rollout capture share this atomic check. User names are preserved, and if both
@@ -435,11 +419,9 @@ pub(crate) fn try_auto_rename(app: &AppCtx, sid: &str, prompt: &str) -> bool {
             return false;
         };
         // Grok names its own conversations. Leaving the numbered placeholder in place until that title
-        // arrives makes the sidebar change once instead of first taking a condensed first-prompt name
-        // and then being overwritten by Grok's title.
-        if crate::db::repo::get_session_kind(&conn, sid).ok().flatten()
-            == Some(crate::models::SessionKind::Grok)
-        {
+        // arrives makes the sidebar change once instead of taking a condensed first-prompt name first and
+        // then being replaced by Grok's title.
+        if crate::db::repo::get_session_kind(&conn, sid).ok().flatten() == Some(crate::models::SessionKind::Grok) {
             return false;
         }
         match crate::db::repo::get_session_name(&conn, sid) {
@@ -451,24 +433,63 @@ pub(crate) fn try_auto_rename(app: &AppCtx, sid: &str, prompt: &str) -> bool {
         }
     };
     if renamed {
-        provisional().lock().unwrap().insert(sid.to_string(), title);
         app.emit(crate::host::TREE_CHANGED, ());
     }
     renamed
 }
 
-/// Adopt a title the agent chose for itself (Grok's `generated_title` / `session_info_update`).
+/// Longest title an agent may name a session with, matching the AI title limit.
+const AGENT_TITLE_CHARS: usize = 80;
+
+/// Setting holding, by session id, the agent-written title this app last adopted.
 ///
-/// Applies only while the session still carries an automatic placeholder or the provisional name this
-/// backend wrote from the first prompt; a name the user typed is left untouched. The provisional entry
-/// is kept current so successive agent title refreshes keep following the conversation until the user
-/// renames the session.
+/// A name the agent chose has to keep following the agent's later refreshes, while a name the person
+/// typed must never be overwritten. `is_auto_name` recognises placeholders only, so the adopted title is
+/// remembered here — in the database, so following survives a restart.
+const AGENT_TITLES_SETTING: &str = "session.agentTitle";
+
+/// How many adopted titles are kept; entries belong to old sessions that will never claim them again.
+const AGENT_TITLES_LIMIT: usize = 512;
+
+fn adopted_titles(conn: &rusqlite::Connection) -> HashMap<String, String> {
+    crate::db::repo::get_app_settings(conn).ok()
+        .and_then(|settings| settings.get(AGENT_TITLES_SETTING).cloned())
+        .and_then(|raw| serde_json::from_str(&raw).ok())
+        .unwrap_or_default()
+}
+
+/// Remember, or with `None` forget, the agent title this app adopted for a session.
+fn remember_adopted_title(conn: &rusqlite::Connection, sid: &str, title: Option<&str>) {
+    let mut titles = adopted_titles(conn);
+    match title {
+        Some(title) => { titles.insert(sid.to_string(), title.to_string()); }
+        None => if titles.remove(sid).is_none() { return; },
+    }
+    if titles.len() > AGENT_TITLES_LIMIT {
+        let mut keys: Vec<String> = titles.keys().cloned().collect();
+        keys.sort();
+        let excess = titles.len() - AGENT_TITLES_LIMIT;
+        for key in keys.into_iter().take(excess) { titles.remove(&key); }
+    }
+    let Ok(value) = serde_json::to_string(&titles) else { return };
+    let _ = crate::db::repo::set_app_settings(conn, &HashMap::from([(AGENT_TITLES_SETTING.to_string(), value)]));
+}
+
+/// The person named this session themselves: stop following any title the agent writes from now on.
+pub(crate) fn forget_adopted_title(app: &AppCtx, sid: &str) {
+    let Ok(conn) = app.db().conn.lock() else { return };
+    remember_adopted_title(&conn, sid, None);
+}
+
+/// Adopt a title the agent chose for itself, unless the person already named the session.
+///
+/// Applies while the session still carries an automatic placeholder or the title this app last adopted
+/// from the agent. Anything else is a name the person typed, and is left alone.
 pub(crate) fn rename_from_agent_title(app: &AppCtx, sid: &str, title: &str) -> bool {
-    let trimmed = title.trim();
-    if trimmed.is_empty() {
+    let clean: String = title.trim().chars().take(AGENT_TITLE_CHARS).collect();
+    if !crate::agent::session_title::is_valid_title(&clean) {
         return false;
     }
-    let clean: String = trimmed.chars().take(80).collect();
     let renamed = {
         let db = app.db();
         let Ok(conn) = db.conn.lock() else {
@@ -479,37 +500,36 @@ pub(crate) fn rename_from_agent_title(app: &AppCtx, sid: &str, title: &str) -> b
             _ => return false,
         };
         if current == clean {
-            provisional().lock().unwrap().insert(sid.to_string(), clean);
+            remember_adopted_title(&conn, sid, Some(&clean));
             return false;
         }
-        let provisional_current = provisional().lock().unwrap().get(sid).cloned();
-        let follow = is_auto_name(&current) || provisional_current.as_deref() == Some(current.as_str());
-        if !follow {
+        let adopted = adopted_titles(&conn).get(sid).cloned();
+        if !is_auto_name(&current) && adopted.as_deref() != Some(current.as_str()) {
             return false;
         }
-        crate::db::repo::rename_node(&conn, crate::models::NodeKind::Session, sid, &clean).is_ok()
+        if crate::db::repo::rename_node(&conn, crate::models::NodeKind::Session, sid, &clean).is_err() {
+            return false;
+        }
+        remember_adopted_title(&conn, sid, Some(&clean));
+        true
     };
     if renamed {
-        provisional().lock().unwrap().insert(sid.to_string(), clean);
         app.emit(crate::host::TREE_CHANGED, ());
     }
     renamed
 }
 
-/// Mirror Grok's on-disk conversation title into the sidebar.
+/// Mirror Grok's own conversation title into the sidebar.
 ///
-/// Grok persists `generated_title` to `summary.json`; reading it covers terminal turns and resumed
-/// chat conversations that no longer push `session_info_update`. Needs the session's native id, which
-/// both its `SessionStart` hook and the ACP `session/new` reply store.
+/// Grok persists `generated_title` to `summary.json` beside its recording, and refreshes it as the
+/// conversation develops. Reading that file covers terminal turns and resumed chat conversations, which
+/// no longer push `session_info_update` for a title they already have.
 pub(crate) fn sync_grok_title_from_disk(app: &AppCtx, sid: &str) {
     let native = {
         let db = app.db();
-        let Ok(conn) = db.conn.lock() else {
-            return;
-        };
+        let Ok(conn) = db.conn.lock() else { return };
         if crate::db::repo::get_session_kind(&conn, sid).ok().flatten()
-            != Some(crate::models::SessionKind::Grok)
-        {
+            != Some(crate::models::SessionKind::Grok) {
             return;
         }
         match crate::db::repo::get_agent_session_id(&conn, sid) {
@@ -836,8 +856,8 @@ fn serve_with_app(
             if let Some(tool_signal) = parse_tool_signal(&body) {
                 on_signal(sid.clone(), tool_signal);
             }
-            // Grok writes its conversation title to summary.json; mirror it once a terminal turn ends.
-            // Chat hooks already returned above, so this only covers terminal (tui) Grok sessions.
+            // Grok writes its conversation title to `summary.json`; mirror it once a turn ends. Chat
+            // callbacks returned above, so this only covers terminal (tui) Grok sessions.
             if let Some(app) = &app {
                 if parse_url(&url).is_some_and(|(_, _, event)| event == "waiting") {
                     sync_grok_title_from_disk(app, &sid);
@@ -1021,7 +1041,7 @@ pub(crate) fn is_auto_name(name: &str) -> bool {
         "Kimi",
         "Kiro",
         // `Grok Build` must be tried as well as `Grok`: matching `Grok` first would leave `Build 2`,
-        // which is not digits, so a longer prefix still gets its own attempt below.
+        // which is not a number, so every prefix gets its own attempt below.
         "Grok Build",
         "Grok",
         "ZCode",
@@ -2556,6 +2576,67 @@ mod tests {
         );
         // Still reject an invalid token.
         assert!(handle("/hook/s1?t=wrong&e=notfound", "tok").is_none());
+    }
+
+    /// A headless backend holding one session, for the naming rules that read and write the database.
+    fn app_with_session(name: &str, kind: &str, engine: &str) -> (std::path::PathBuf, AppCtx) {
+        let root = std::env::temp_dir().join(format!("vlx-name-test-{}", uuid::Uuid::new_v4()));
+        std::fs::create_dir_all(&root).unwrap();
+        let db = crate::db::Db::open(&root.join("test.db")).unwrap();
+        let app = AppCtx::Headless(std::sync::Arc::new(crate::host::HeadlessHost::new(root.clone(), db)));
+        {
+            let conn = app.db().conn.lock().unwrap();
+            conn.execute("INSERT INTO projects(id,name,root_path,created_at) VALUES ('p','P','/w',0)", []).unwrap();
+            conn.execute(
+                "INSERT INTO sessions(id,project_id,name,kind,engine,created_at) VALUES ('s','p',?1,?2,?3,0)",
+                rusqlite::params![name, kind, engine],
+            ).unwrap();
+        }
+        (root, app)
+    }
+
+    fn session_name(app: &AppCtx) -> String {
+        crate::db::repo::get_session_name(&app.db().conn.lock().unwrap(), "s").unwrap().unwrap()
+    }
+
+    /// Grok names its own conversations: a placeholder follows the agent's title, and so does the title
+    /// the agent wrote last, while a name the person typed is never touched.
+    #[test]
+    fn an_agent_title_replaces_a_placeholder_and_keeps_following_its_own_refresh() {
+        let (root, app) = app_with_session("Grok Build 3", "grok", "chat");
+        assert!(rename_from_agent_title(&app, "s", "Fix login"));
+        assert_eq!(session_name(&app), "Fix login");
+        // Grok refines the title as the conversation develops; the adopted name keeps following it.
+        assert!(rename_from_agent_title(&app, "s", "Fix the login page"));
+        assert_eq!(session_name(&app), "Fix the login page");
+        // A person's own name ends the following, for this run and after a restart.
+        {
+            let conn = app.db().conn.lock().unwrap();
+            crate::db::repo::rename_node(&conn, crate::models::NodeKind::Session, "s", "My own name").unwrap();
+        }
+        forget_adopted_title(&app, "s");
+        assert!(!rename_from_agent_title(&app, "s", "Grok's newest title"));
+        assert_eq!(session_name(&app), "My own name");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// The first prompt never names a Grok session: Grok's own title arrives instead, so the sidebar
+    /// changes once rather than twice.
+    #[test]
+    fn the_first_prompt_leaves_grok_sessions_to_the_agent_title() {
+        let (root, app) = app_with_session("Grok Build 3", "grok", "chat");
+        assert!(!try_auto_rename(&app, "s", "fix the login page please"));
+        assert_eq!(session_name(&app), "Grok Build 3");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    /// Other agents still take their name from the first prompt.
+    #[test]
+    fn the_first_prompt_still_names_other_agents() {
+        let (root, app) = app_with_session("Claude 2", "claude", "tui");
+        assert!(try_auto_rename(&app, "s", "fix the login page please"));
+        assert_eq!(session_name(&app), "fix the login page p…");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     #[test]

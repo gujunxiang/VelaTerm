@@ -553,12 +553,16 @@ const zhCN: typeof en = {
   "settings.navTree": "标准",
   "settings.navCompact": "紧凑",
   "settings.tabs": "标签页",
+  "settings.tabsHint": "“单标签”会为你打开的每个会话复用同一个标签页，其余会话在后台继续运行。“多标签”则为每个会话单独开一个标签页。",
   "settings.dynamicStatusFilter": "状态筛选动态增加",
+  "settings.dynamicStatusFilterHint": "状态筛选会保留应用筛选那一刻匹配的会话。开启后，之后开始匹配的会话也会被加入。会话状态变化时不会被移出列表。",
   "settings.tabSingle": "单标签",
   "settings.tabMulti": "多标签",
   "settings.maxLiveTabs": "后台保活上限",
+  "settings.maxLiveTabsHint": "单标签模式下可在后台保持运行的会话数量。超过上限时会关闭最久未活动的空闲会话；正在工作、等待你处理或有未读通知的会话会被保留。",
   "settings.defaultShell": "默认 Shell",
   "settings.spawnConfirm": "派生前确认",
+  "settings.spawnConfirmHint": "适用于代理通过 vspawn 派生的会话，而不是你自己打开的标签页。开启后，可在会话启动前查看并修改提示词。",
   "settings.usageAuto": "额度自动刷新",
   "settings.usageRefresh": "额度刷新",
   "settings.autoContinue": "额度重置后自动继续",
@@ -851,7 +855,7 @@ const zhCN: typeof en = {
   "settings.fontPreviewChat": "设置页面已更新。每项字体设置都会立即生效，你也可以随时恢复默认值。",
   "settings.fontResetGroup": "恢复默认字体",
   "settings.composerChips": "输入工具栏",
-  "settings.composerChipsHint": "已开启的项目按此处顺序显示在消息旁。功能暂不可用时，例如智能体未运行、没有后台任务或尚未完成登录，项目仍会显示，但为空或不可操作。当前智能体不支持的功能不显示。空间不足时，放不下的项目会移入“更多”菜单。此处关闭的项目仅显示在该菜单中，仍可在此配置。",
+  "settings.composerChipsHint": "已开启的项目按此处顺序显示在消息旁。功能暂不可用时，例如智能体未运行、没有后台任务或尚未完成登录，项目仍会显示，但为空或不可操作。当前智能体不支持的功能不显示。空间不足时，放不下的项目会移入“更多”菜单。此处关闭的项目在重新开启前不会显示在任何位置。",
   "settings.composerChipUp": (chip: string) => `将${chip}上移`,
   "settings.composerChipDown": (chip: string) => `将${chip}下移`,
   "settings.composerChip.model": "模型",
@@ -993,6 +997,19 @@ const zhCN: typeof en = {
   "remote.mirror": "多端界面镜像", // Mirror layout across devices
   "remote.mirrorHint":
     "标签、分屏和当前会话在所有已连接设备上保持一致，各端的键盘焦点互不打扰。", // Tabs, splits, and the active session stay the same on every connected device. Keyboard focus stays put on each one.
+  "remote.listenLabel": "监听地址", // Listen on
+  "remote.listenAll": "所有网络", // All networks
+  "remote.listenLoopback": "仅本机（隧道）", // This computer only (tunnel)
+  "remote.listenUnavailable": (ip: string) => `${ip}（不可用）`, // ${ip} (not available)
+  "remote.reachAll": "可通过此电脑连接的任意网络访问。", // Reachable from every network this computer is connected to.
+  "remote.reachOnly": (addr: string) => `仅可通过 ${addr} 访问。`, // Reachable only at ${addr}.
+  "remote.reachTunnel": "仅可通过此电脑上的隧道或代理访问，例如 tailscale serve 或 ssh -L。", // Reachable only through a tunnel or proxy on this computer, for example tailscale serve or ssh -L.
+  "remote.pairingHostLabel": "配对链接使用的地址", // Address for pairing links
+  "remote.pairingHostPlaceholder": "host.tailnet.ts.net", // host.tailnet.ts.net
+  "remote.pairingHostNeeded": "客户端通过隧道访问此电脑。请输入它们使用的主机名或 IP。不填写时，配对链接会指向 127.0.0.1，仅在使用 ssh -L 时有效。", // Clients reach this computer through a tunnel. Enter the host name or IP they use. Without it, pairing links point to 127.0.0.1, which only works with ssh -L.
+  "remote.bindInvalid": (value: string) => `“${value}” 不是有效的监听地址。请选择所有网络、仅本机，或此电脑上的一个 IPv4 地址。`, // "${value}" is not a valid listen address. Choose all networks, this computer only, or an IPv4 address of this computer.
+  "remote.bindUnavailable": (ip: string) => `地址 ${ip} 在此电脑上不可用。请连接对应网络或 VPN，或选择其他地址。远程访问不会回退到所有网络。`, // The address ${ip} is not available on this computer. Connect the network or VPN, or choose another address. Remote access never falls back to all networks.
+  "remote.pairingHostInvalid": (value: string) => `“${value}” 不是有效的配对链接地址。请输入主机名或 IPv4 地址，不要包含协议、端口或路径。`, // "${value}" is not a valid address for pairing links. Enter a host name or an IPv4 address, without scheme, port, or path.
 
   // ── Remote connection panel ──
   "connect.wslUpgrade": "此工作区正在运行其他版本的服务端。重启服务端会结束此 WSL 工作区中的所有运行中会话。",
@@ -1575,6 +1592,7 @@ const zhCN: typeof en = {
   "files.nameLabel": "名称", // Name
   "files.newTooltip": "新建文件或文件夹", // New file or folder
   "files.openInTerminal": "在终端中打开", // Open in Terminal
+  "files.collapseAll": "全部折叠", // Collapse All
   "files.revealInFinder": "在文件管理器中显示", // Show in File Manager
   "files.copyPath": "复制路径", // Copy Path
   "files.copyRelPath": "复制相对路径", // Copy Relative Path
@@ -2586,6 +2604,8 @@ const zhCN: typeof en = {
   "sidebarSection.nav": "侧边栏分区",
   "sidebarSection.noTasks": "还没有任务会话。",
   "sidebarSection.noChats": "还没有聊天会话。",
+  "sidebarSection.setDefaultView": "设为默认视图",
+  "sidebarSection.clearDefaultView": "取消默认视图",
   "artifact.comment": "评论",
   "artifact.commentTitle": "点选页面元素，给智能体留评论",
   "artifact.pickHint": "点击页面中的元素来评论，按 Esc 退出。",

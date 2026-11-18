@@ -557,12 +557,16 @@ const ko: typeof en = {
   "settings.navTree": "표준", // Tree
   "settings.navCompact": "조밀", // Compact
   "settings.tabs": "탭", // Tabs
+  "settings.tabsHint": "'단일'은 여는 세션마다 같은 탭을 재사용하고 나머지는 백그라운드에서 계속 실행합니다. '다중'은 각 세션에 고유한 탭을 부여합니다.", // Single reuses one tab for every session you open, keeping the others running in the background. Multi gives each session its own tab.
   "settings.dynamicStatusFilter": "상태 필터 동적 추가",
+  "settings.dynamicStatusFilterHint": "상태 필터는 적용한 시점에 일치했던 세션을 유지합니다. 켜면 이후에 일치하기 시작한 세션도 추가됩니다. 상태가 바뀌어도 세션이 목록에서 제거되지는 않습니다.", // A status filter keeps the sessions that matched when you applied it. When on, sessions that begin matching later are added as well. Sessions are never removed as their status changes.
   "settings.tabSingle": "단일", // Single
   "settings.tabMulti": "다중", // Multi
   "settings.maxLiveTabs": "Background limit", // Background limit
+  "settings.maxLiveTabsHint": "단일 탭 모드에서 백그라운드로 계속 실행할 세션 수입니다. 한도를 넘으면 가장 오래된 유휴 세션이 닫히며, 작업 중이거나 응답을 기다리거나 읽지 않은 알림이 있는 세션은 유지됩니다.", // How many sessions keep running in the background in single-tab mode. Beyond the limit the oldest idle session is closed; ones that are working, waiting for you, or holding an unread notification are kept.
   "settings.defaultShell": "기본 셸", // Default shell
   "settings.spawnConfirm": "Confirm before spawn", // Confirm before spawn
+  "settings.spawnConfirmHint": "직접 여는 탭이 아니라 에이전트가 vspawn으로 파생시키는 세션에 적용됩니다. 켜면 세션이 시작되기 전에 프롬프트를 검토하고 편집할 수 있습니다.", // Applies to sessions an agent derives with vspawn, not to tabs you open yourself. When on, you can review and edit the prompt before the session starts.
   "settings.usageAuto": "Usage auto-refresh", // Usage auto-refresh
   "settings.usageRefresh": "Usage refresh", // Usage refresh
   "settings.autoContinue": "한도 초기화 후 자동으로 계속", // Continue after limit resets
@@ -860,7 +864,7 @@ const ko: typeof en = {
   "settings.fontPreviewChat": "설정 화면을 업데이트했습니다. 각 글꼴 설정은 즉시 적용되며 언제든지 기본값으로 되돌릴 수 있습니다.",
   "settings.fontResetGroup": "글꼴 기본값 복원",
   "settings.composerChips": "메시지 입력 도구 모음",
-  "settings.composerChipsHint": "켜진 항목은 여기에 표시된 순서대로 메시지 옆에 나타납니다. 에이전트가 실행 중이 아니거나, 백그라운드 작업이 없거나, 로그인이 완료되지 않아 기능을 일시적으로 사용할 수 없을 때도 해당 항목은 비어 있거나 비활성화된 상태로 표시됩니다. 현재 에이전트가 지원하지 않는 기능은 표시하지 않습니다. 공간이 부족한 항목은 더 보기 메뉴로 이동합니다. 여기서 끈 항목은 해당 메뉴에만 표시되며, 설정은 계속 여기서 변경할 수 있습니다.",
+  "settings.composerChipsHint": "켜진 항목은 여기에 표시된 순서대로 메시지 옆에 나타납니다. 에이전트가 실행 중이 아니거나, 백그라운드 작업이 없거나, 로그인이 완료되지 않아 기능을 일시적으로 사용할 수 없을 때도 해당 항목은 비어 있거나 비활성화된 상태로 표시됩니다. 현재 에이전트가 지원하지 않는 기능은 표시하지 않습니다. 공간이 부족한 항목은 더 보기 메뉴로 이동합니다. 여기서 끈 항목은 다시 켤 때까지 어디에도 표시되지 않습니다.",
   "settings.composerChipUp": (chip: string) => `${chip} 위로 이동`,
   "settings.composerChipDown": (chip: string) => `${chip} 아래로 이동`,
   "settings.composerChip.model": "모델",
@@ -1004,6 +1008,19 @@ const ko: typeof en = {
   "remote.mirror": "기기 간 레이아웃 미러링", // Mirror layout across devices
   "remote.mirrorHint":
     "탭, 분할, 활성 세션이 연결된 모든 기기에서 동일하게 유지됩니다. 키보드 포커스는 기기마다 그대로 유지됩니다.", // Tabs, splits, and the active session stay the same on every connected device. Keyboard focus stays put on each one.
+  "remote.listenLabel": "수신 주소", // Listen on
+  "remote.listenAll": "모든 네트워크", // All networks
+  "remote.listenLoopback": "이 컴퓨터만 (터널)", // This computer only (tunnel)
+  "remote.listenUnavailable": (ip: string) => `${ip}(사용 불가)`, // ${ip} (not available)
+  "remote.reachAll": "이 컴퓨터가 연결된 모든 네트워크에서 접속할 수 있습니다.", // Reachable from every network this computer is connected to.
+  "remote.reachOnly": (addr: string) => `${addr}에서만 접속할 수 있습니다.`, // Reachable only at ${addr}.
+  "remote.reachTunnel": "이 컴퓨터의 터널이나 프록시를 통해서만 접속할 수 있습니다(예: tailscale serve, ssh -L).", // Reachable only through a tunnel or proxy on this computer, for example tailscale serve or ssh -L.
+  "remote.pairingHostLabel": "페어링 링크 주소", // Address for pairing links
+  "remote.pairingHostPlaceholder": "host.tailnet.ts.net", // host.tailnet.ts.net
+  "remote.pairingHostNeeded": "클라이언트가 터널을 통해 이 컴퓨터에 접속합니다. 클라이언트가 사용하는 호스트 이름 또는 IP를 입력하세요. 입력하지 않으면 페어링 링크가 127.0.0.1을 가리키며 ssh -L에서만 동작합니다.", // Clients reach this computer through a tunnel. Enter the host name or IP they use. Without it, pairing links point to 127.0.0.1, which only works with ssh -L.
+  "remote.bindInvalid": (value: string) => `“${value}”은(는) 올바른 수신 주소가 아닙니다. 모든 네트워크, 이 컴퓨터만, 또는 이 컴퓨터의 IPv4 주소를 선택하세요.`, // "${value}" is not a valid listen address. Choose all networks, this computer only, or an IPv4 address of this computer.
+  "remote.bindUnavailable": (ip: string) => `${ip} 주소는 이 컴퓨터에서 사용할 수 없습니다. 네트워크나 VPN에 연결하거나 다른 주소를 선택하세요. 원격 접속이 모든 네트워크로 대체되는 일은 없습니다.`, // The address ${ip} is not available on this computer. Connect the network or VPN, or choose another address. Remote access never falls back to all networks.
+  "remote.pairingHostInvalid": (value: string) => `“${value}”은(는) 올바른 페어링 링크 주소가 아닙니다. 스킴, 포트, 경로 없이 호스트 이름 또는 IPv4 주소를 입력하세요.`, // "${value}" is not a valid address for pairing links. Enter a host name or an IPv4 address, without scheme, port, or path.
 
   // ── Remote connection panel ──
   "connect.wslUpgrade": "이 작업 공간에서 다른 버전의 서버가 실행 중입니다. 서버를 다시 시작하면 이 WSL 작업 공간의 모든 실행 중인 세션이 종료됩니다.",
@@ -1601,6 +1618,7 @@ const ko: typeof en = {
   "files.nameLabel": "이름", // Name
   "files.newTooltip": "새 파일 또는 폴더", // New file or folder
   "files.openInTerminal": "Open in Terminal",
+  "files.collapseAll": "모두 접기", // Collapse All
   "files.revealInFinder": "Show in File Manager",
   "files.copyPath": "Copy Path",
   "files.copyRelPath": "Copy Relative Path",
@@ -2619,6 +2637,8 @@ const ko: typeof en = {
   "sidebarSection.nav": "사이드바 섹션",
   "sidebarSection.noTasks": "아직 작업 세션이 없습니다.",
   "sidebarSection.noChats": "아직 채팅 세션이 없습니다.",
+  "sidebarSection.setDefaultView": "기본 보기로 설정",
+  "sidebarSection.clearDefaultView": "기본 보기 해제",
   "artifact.comment": "댓글", // Comment
   "artifact.commentTitle": "페이지 요소를 선택해 에이전트에게 댓글을 남깁니다", // Click elements in the page to leave comments for the agent
   "artifact.pickHint": "페이지에서 요소를 클릭해 댓글을 답니다. Esc로 종료합니다.", // Click an element in the page to comment on it. Press Esc to stop.

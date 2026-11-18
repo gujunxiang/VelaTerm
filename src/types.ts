@@ -65,12 +65,10 @@ export function supportsSteering(kind: SessionKind): boolean {
   return kind === "antigravity" || !ACP_CHAT_KINDS.includes(kind);
 }
 
-/** Whether the conversation view can send images to this agent. After 0.3.1 every chat agent VelaTerm
- * drives accepts image blocks: Antigravity and DeepSeek gained support upstream, and Grok's server,
- * though it advertises `image: false`, accepts them (enabled in this fork). The live protocol capability
- * still gates the control per session. */
-export function acceptsChatImages(_kind: SessionKind): boolean {
-  return true;
+/** Whether the conversation view can offer images to this agent at all. Grok's ACP server declines image
+ * prompts; Antigravity's accepts them, and OpenCode, including DeepSeek, leaves the model to decide. */
+export function acceptsChatImages(kind: SessionKind): boolean {
+  return kind !== "grok";
 }
 
 /** Whether rewinding works only from the latest message, by replacing it. ZCode moves a conversation back

@@ -155,8 +155,8 @@ fn parse(agent: &str, text: &str) -> Vec<String> {
                 }
                 format!("{provider}/{model}")
             }
-            // Grok prints prose around a bulleted list: `  * grok-4.5 (default)` for the default and
-            // `  - grok-4.6` for every other model.
+            // Grok prints prose around a bulleted list: `  * grok-4.5 (default)` marks the default model,
+            // and `  - grok-4.6` lists every other model the account can switch to.
             "grok" => {
                 let Some(rest) = line.strip_prefix("* ").or_else(|| line.strip_prefix("- ")) else {
                     continue;

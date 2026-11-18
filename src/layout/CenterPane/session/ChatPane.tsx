@@ -100,7 +100,7 @@ import { imageFromNativeClipboard, imagesFromClipboard, imagesFromDrop } from ".
 import { IS_MAC, IS_PLAIN_BROWSER, labelWithCombo } from "../../../hooks/shortcutRegistry";
 import { useMentionFiles } from "./fileMentions";
 import { ControlChip, type ChipOption } from "./controls";
-import { EFFORTS, THINKING_OFF, effortChipLabel, effortChipOptions, levelsOf, modelChipOptions } from "./modelChips";
+import { EFFORTS, THINKING_NONE, THINKING_OFF, effortChipLabel, effortChipOptions, levelsOf, modelChipOptions } from "./modelChips";
 import { AutoContinueBar, FastModeChip, McpChip, NotificationBar, RetryLine, TasksChip, UsageMeter } from "./extras";
 import { DeepSeekApiChip } from "./DeepSeekApiChip";
 import { AgentAccountMenu, AgentAuth, needsAttention } from "./AgentAuth";
@@ -2204,7 +2204,8 @@ export function ChatPane({
         // The mode goes first: approving a plan is what ends plan mode, and the agent has to be out of it
         // before the tool it was asking about runs. It is also how a mode the answer adopts reaches the
         // chip and the stored session setting, which the protocol's own `updatedPermissions` never sees.
-        // An agent without the mode, such as Grok, leaves plan mode on its own side when the plan is approved.
+        // An agent without the mode, such as Grok, leaves plan mode on its own side when the plan is
+        // approved, so a mode the permission catalogue does not expose is not applied.
         const modes = permissionCatalog?.catalog?.modes;
         if (reply.mode && (!modes || modes.includes(reply.mode))) await applyMode(reply.mode);
         await chatPermission(session.id, request.id, reply.allow, {
@@ -2469,7 +2470,7 @@ export function ChatPane({
     t,
     allowed,
     false,
-    session.kind === "claude" || allowed.includes(THINKING_OFF),
+    session.kind === "claude" || allowed.includes(THINKING_OFF) || allowed.includes(THINKING_NONE),
   );
   // The permission chip shows the mode that was chosen; whether that choice is already the running
   // mode is carried by the chip's mark and by the menu's row notes. Only Codex defers the change to

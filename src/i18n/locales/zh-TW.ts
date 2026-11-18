@@ -554,12 +554,16 @@ const zhTW: typeof en = {
   "settings.navTree": "標準", // Tree
   "settings.navCompact": "緊湊", // Compact
   "settings.tabs": "分頁", // Tabs
+  "settings.tabsHint": "「單分頁」會為你開啟的每個工作階段重複使用同一個分頁，其餘則在背景繼續執行。「多分頁」則為每個工作階段各開一個分頁。", // Single reuses one tab for every session you open, keeping the others running in the background. Multi gives each session its own tab.
   "settings.dynamicStatusFilter": "狀態篩選動態增加",
+  "settings.dynamicStatusFilterHint": "狀態篩選會保留套用當下符合的工作階段。開啟後，之後才開始符合的工作階段也會加入。工作階段的狀態改變時不會被移出清單。", // A status filter keeps the sessions that matched when you applied it. When on, sessions that begin matching later are added as well. Sessions are never removed as their status changes.
   "settings.tabSingle": "單分頁", // Single
   "settings.tabMulti": "多分頁", // Multi
   "settings.maxLiveTabs": "背景保活上限", // Background limit
+  "settings.maxLiveTabsHint": "單一分頁模式下可在背景保持執行的工作階段數量。超過上限時會關閉閒置最久的工作階段；正在執行、等待你處理或有未讀通知者則會保留。", // How many sessions keep running in the background in single-tab mode. Beyond the limit the oldest idle session is closed; ones that are working, waiting for you, or holding an unread notification are kept.
   "settings.defaultShell": "預設 Shell", // Default shell
   "settings.spawnConfirm": "派生前確認", // Confirm before spawn
+  "settings.spawnConfirmHint": "適用於代理透過 vspawn 衍生的工作階段，而非你自己開啟的分頁。開啟後，可在工作階段啟動前檢視並編輯提示。", // Applies to sessions an agent derives with vspawn, not to tabs you open yourself. When on, you can review and edit the prompt before the session starts.
   "settings.usageAuto": "額度自動刷新", // Usage auto-refresh
   "settings.usageRefresh": "額度刷新", // Usage refresh
   "settings.autoContinue": "額度重設後自動繼續", // Continue after limit resets
@@ -852,7 +856,7 @@ const zhTW: typeof en = {
   "settings.fontPreviewChat": "設定頁面已更新。每項字型設定都會立即生效，你也可以隨時恢復預設值。",
   "settings.fontResetGroup": "恢復預設字型",
   "settings.composerChips": "輸入工具列",
-  "settings.composerChipsHint": "已開啟的項目會依此處順序顯示在訊息旁。功能暫時無法使用時，例如智慧代理未執行、沒有背景工作或尚未完成登入，項目仍會顯示，但為空白或無法操作。目前智慧代理不支援的功能不顯示。空間不足時，無法容納的項目會移至「更多」選單。在此關閉的項目僅顯示於該選單中，仍可在此設定。",
+  "settings.composerChipsHint": "已開啟的項目會依此處順序顯示在訊息旁。功能暫時無法使用時，例如智慧代理未執行、沒有背景工作或尚未完成登入，項目仍會顯示，但為空白或無法操作。目前智慧代理不支援的功能不顯示。空間不足時，無法容納的項目會移至「更多」選單。在此關閉的項目在重新開啟前不會顯示於任何位置。",
   "settings.composerChipUp": (chip: string) => `將${chip}上移`,
   "settings.composerChipDown": (chip: string) => `將${chip}下移`,
   "settings.composerChip.model": "模型",
@@ -994,6 +998,19 @@ const zhTW: typeof en = {
   "remote.mirror": "多端介面鏡像", // Mirror layout across devices
   "remote.mirrorHint":
     "分頁、分割與目前會話在所有已連線裝置上保持一致，各端的鍵盤焦點互不打擾。", // Tabs, splits, and the active session stay the same on every connected device. Keyboard focus stays put on each one.
+  "remote.listenLabel": "監聽位址", // Listen on
+  "remote.listenAll": "所有網路", // All networks
+  "remote.listenLoopback": "僅限本機（通道）", // This computer only (tunnel)
+  "remote.listenUnavailable": (ip: string) => `${ip}（無法使用）`, // ${ip} (not available)
+  "remote.reachAll": "可透過此電腦連線的任一網路存取。", // Reachable from every network this computer is connected to.
+  "remote.reachOnly": (addr: string) => `僅可透過 ${addr} 存取。`, // Reachable only at ${addr}.
+  "remote.reachTunnel": "僅可透過此電腦上的通道或代理存取，例如 tailscale serve 或 ssh -L。", // Reachable only through a tunnel or proxy on this computer, for example tailscale serve or ssh -L.
+  "remote.pairingHostLabel": "配對連結使用的位址", // Address for pairing links
+  "remote.pairingHostPlaceholder": "host.tailnet.ts.net", // host.tailnet.ts.net
+  "remote.pairingHostNeeded": "用戶端透過通道存取此電腦。請輸入它們使用的主機名稱或 IP。未填寫時，配對連結會指向 127.0.0.1，僅在使用 ssh -L 時有效。", // Clients reach this computer through a tunnel. Enter the host name or IP they use. Without it, pairing links point to 127.0.0.1, which only works with ssh -L.
+  "remote.bindInvalid": (value: string) => `「${value}」不是有效的監聽位址。請選擇所有網路、僅限本機，或此電腦上的一個 IPv4 位址。`, // "${value}" is not a valid listen address. Choose all networks, this computer only, or an IPv4 address of this computer.
+  "remote.bindUnavailable": (ip: string) => `位址 ${ip} 在此電腦上無法使用。請連線對應網路或 VPN，或選擇其他位址。遠端存取不會退回所有網路。`, // The address ${ip} is not available on this computer. Connect the network or VPN, or choose another address. Remote access never falls back to all networks.
+  "remote.pairingHostInvalid": (value: string) => `「${value}」不是有效的配對連結位址。請輸入主機名稱或 IPv4 位址，不要包含通訊協定、連接埠或路徑。`, // "${value}" is not a valid address for pairing links. Enter a host name or an IPv4 address, without scheme, port, or path.
 
   // ── Remote connection panel ──
   "connect.wslUpgrade": "此工作區正在執行其他版本的伺服器。重新啟動伺服器將結束此 WSL 工作區中所有執行中的會話。",
@@ -1576,6 +1593,7 @@ const zhTW: typeof en = {
   "files.nameLabel": "名稱", // Name
   "files.newTooltip": "新增檔案或資料夾", // New file or folder
   "files.openInTerminal": "在終端機中開啟", // Open in Terminal
+  "files.collapseAll": "全部收合", // Collapse All
   "files.revealInFinder": "在檔案管理器中顯示", // Show in File Manager
   "files.copyPath": "複製路徑", // Copy Path
   "files.copyRelPath": "複製相對路徑", // Copy Relative Path
@@ -2587,6 +2605,8 @@ const zhTW: typeof en = {
   "sidebarSection.nav": "側邊欄分區",
   "sidebarSection.noTasks": "目前還沒有任務會話。",
   "sidebarSection.noChats": "目前還沒有聊天會話。",
+  "sidebarSection.setDefaultView": "設為預設檢視",
+  "sidebarSection.clearDefaultView": "取消預設檢視",
   "artifact.comment": "評論", // Comment
   "artifact.commentTitle": "點選頁面元素，給智慧體留下評論", // Click elements in the page to leave comments for the agent
   "artifact.pickHint": "點選頁面中的元素來評論，按 Esc 結束。", // Click an element in the page to comment on it. Press Esc to stop.

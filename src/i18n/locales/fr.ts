@@ -558,12 +558,16 @@ const fr: typeof en = {
   "settings.navTree": "Arbre", // Tree
   "settings.navCompact": "Compacte", // Compact
   "settings.tabs": "Onglets", // Tabs
+  "settings.tabsHint": "« Unique » réutilise le même onglet pour chaque session ouverte et laisse les autres tourner en arrière-plan. « Multiples » donne à chaque session son propre onglet.", // Single reuses one tab for every session you open, keeping the others running in the background. Multi gives each session its own tab.
   "settings.dynamicStatusFilter": "Ajout dynamique au filtre d’état",
+  "settings.dynamicStatusFilterHint": "Un filtre d’état conserve les sessions qui correspondaient au moment où vous l’avez appliqué. Activé, il ajoute aussi celles qui se mettent à correspondre ensuite. Aucune session n’est retirée lorsque son état change.", // A status filter keeps the sessions that matched when you applied it. When on, sessions that begin matching later are added as well. Sessions are never removed as their status changes.
   "settings.tabSingle": "Unique", // Single
   "settings.tabMulti": "Multiples", // Multi
   "settings.maxLiveTabs": "Background limit", // Background limit
+  "settings.maxLiveTabsHint": "Nombre de sessions maintenues en arrière-plan en mode onglet unique. Au-delà de la limite, la session inactive la plus ancienne est fermée ; celles qui travaillent, attendent une action de votre part ou ont une notification non lue sont conservées.", // How many sessions keep running in the background in single-tab mode. Beyond the limit the oldest idle session is closed; ones that are working, waiting for you, or holding an unread notification are kept.
   "settings.defaultShell": "Shell par défaut", // Default shell
   "settings.spawnConfirm": "Confirm before spawn", // Confirm before spawn
+  "settings.spawnConfirmHint": "S’applique aux sessions qu’un agent dérive via vspawn, pas aux onglets que vous ouvrez vous-même. Activé, vous pouvez relire et modifier l’invite avant le démarrage.", // Applies to sessions an agent derives with vspawn, not to tabs you open yourself. When on, you can review and edit the prompt before the session starts.
   "settings.usageAuto": "Usage auto-refresh", // Usage auto-refresh
   "settings.usageRefresh": "Usage refresh", // Usage refresh
   "settings.autoContinue": "Reprendre après réinitialisation", // Continue after limit resets
@@ -862,7 +866,7 @@ const fr: typeof en = {
   "settings.fontPreviewChat": "J'ai mis à jour la page des paramètres. Chaque réglage de police prend effet immédiatement, et vous pouvez rétablir les valeurs par défaut à tout moment.",
   "settings.fontResetGroup": "Rétablir les polices par défaut",
   "settings.composerChips": "Barre d’outils de saisie",
-  "settings.composerChipsHint": "Les éléments activés s’affichent à côté du message dans l’ordre indiqué. Si une fonction est temporairement indisponible (agent arrêté, aucune tâche en arrière-plan ou connexion au compte en attente), son élément reste visible, mais vide ou désactivé. Les fonctions non prises en charge par l’agent actuel sont omises. Les éléments qui ne tiennent pas dans la barre passent dans le menu Plus. Les éléments désactivés ici apparaissent uniquement dans ce menu et restent configurables ici.",
+  "settings.composerChipsHint": "Les éléments activés s’affichent à côté du message dans l’ordre indiqué. Si une fonction est temporairement indisponible (agent arrêté, aucune tâche en arrière-plan ou connexion au compte en attente), son élément reste visible, mais vide ou désactivé. Les fonctions non prises en charge par l’agent actuel sont omises. Les éléments qui ne tiennent pas dans la barre passent dans le menu Plus. Les éléments désactivés ici ne s’affichent nulle part tant que vous ne les réactivez pas.",
   "settings.composerChipUp": (chip: string) => `Monter ${chip}`,
   "settings.composerChipDown": (chip: string) => `Descendre ${chip}`,
   "settings.composerChip.model": "Modèle",
@@ -1009,6 +1013,19 @@ const fr: typeof en = {
   "remote.mirror": "Refléter la disposition sur tous les appareils", // Mirror layout across devices
   "remote.mirrorHint":
     "Les onglets, les divisions et la session active restent identiques sur tous les appareils connectés. Le focus clavier ne bouge pas.", // Tabs, splits, and the active session stay the same on every connected device. Keyboard focus stays put on each one.
+  "remote.listenLabel": "Écouter sur", // Listen on
+  "remote.listenAll": "Tous les réseaux", // All networks
+  "remote.listenLoopback": "Cet ordinateur uniquement (tunnel)", // This computer only (tunnel)
+  "remote.listenUnavailable": (ip: string) => `${ip} (indisponible)`, // ${ip} (not available)
+  "remote.reachAll": "Accessible depuis tous les réseaux auxquels cet ordinateur est connecté.", // Reachable from every network this computer is connected to.
+  "remote.reachOnly": (addr: string) => `Accessible uniquement à l'adresse ${addr}.`, // Reachable only at ${addr}.
+  "remote.reachTunnel": "Accessible uniquement via un tunnel ou un proxy sur cet ordinateur, par exemple tailscale serve ou ssh -L.", // Reachable only through a tunnel or proxy on this computer, for example tailscale serve or ssh -L.
+  "remote.pairingHostLabel": "Adresse des liens d’appairage", // Address for pairing links
+  "remote.pairingHostPlaceholder": "host.tailnet.ts.net", // host.tailnet.ts.net
+  "remote.pairingHostNeeded": "Les clients joignent cet ordinateur via un tunnel. Saisissez le nom d’hôte ou l’IP qu’ils utilisent. Sans cela, les liens d’appairage pointent vers 127.0.0.1, ce qui ne fonctionne qu’avec ssh -L.", // Clients reach this computer through a tunnel. Enter the host name or IP they use. Without it, pairing links point to 127.0.0.1, which only works with ssh -L.
+  "remote.bindInvalid": (value: string) => `« ${value} » n’est pas une adresse d’écoute valide. Choisissez tous les réseaux, cet ordinateur uniquement, ou une adresse IPv4 de cet ordinateur.`, // "${value}" is not a valid listen address. Choose all networks, this computer only, or an IPv4 address of this computer.
+  "remote.bindUnavailable": (ip: string) => `L’adresse ${ip} n’est pas disponible sur cet ordinateur. Connectez le réseau ou le VPN, ou choisissez une autre adresse. L’accès distant ne bascule jamais sur tous les réseaux.`, // The address ${ip} is not available on this computer. Connect the network or VPN, or choose another address. Remote access never falls back to all networks.
+  "remote.pairingHostInvalid": (value: string) => `« ${value} » n’est pas une adresse valide pour les liens d’appairage. Saisissez un nom d’hôte ou une adresse IPv4, sans schéma, port ni chemin.`, // "${value}" is not a valid address for pairing links. Enter a host name or an IPv4 address, without scheme, port, or path.
 
   // ── Remote connection panel ──
   "connect.wslUpgrade": "Cet espace de travail utilise une autre version du serveur. Le redémarrage du serveur met fin à toutes les sessions actives de cet espace de travail WSL.",
@@ -1626,6 +1643,7 @@ const fr: typeof en = {
   "files.nameLabel": "Nom", // Name
   "files.newTooltip": "Nouveau fichier ou dossier", // New file or folder
   "files.openInTerminal": "Open in Terminal",
+  "files.collapseAll": "Tout réduire", // Collapse All
   "files.revealInFinder": "Show in File Manager",
   "files.copyPath": "Copy Path",
   "files.copyRelPath": "Copy Relative Path",
@@ -2653,6 +2671,8 @@ const fr: typeof en = {
   "sidebarSection.nav": "Sections de la barre latérale",
   "sidebarSection.noTasks": "Aucune session de tâche pour le moment.",
   "sidebarSection.noChats": "Aucune session de discussion pour le moment.",
+  "sidebarSection.setDefaultView": "Définir comme vue par défaut",
+  "sidebarSection.clearDefaultView": "Retirer la vue par défaut",
   "artifact.comment": "Commenter", // Comment
   "artifact.commentTitle": "Cliquer sur des éléments de la page pour laisser des commentaires à l'agent", // Click elements in the page to leave comments for the agent
   "artifact.pickHint": "Cliquez sur un élément de la page pour le commenter. Appuyez sur Échap pour arrêter.", // Click an element in the page to comment on it. Press Esc to stop.

@@ -558,12 +558,16 @@ const es: typeof en = {
   "settings.navTree": "Árbol", // Tree
   "settings.navCompact": "Compacta", // Compact
   "settings.tabs": "Pestañas", // Tabs
+  "settings.tabsHint": "«Única» reutiliza la misma pestaña para cada sesión que abres y mantiene las demás en segundo plano. «Múltiples» da a cada sesión su propia pestaña.", // Single reuses one tab for every session you open, keeping the others running in the background. Multi gives each session its own tab.
   "settings.dynamicStatusFilter": "Incorporación dinámica al filtro de estado",
+  "settings.dynamicStatusFilterHint": "Un filtro de estado conserva las sesiones que coincidían al aplicarlo. Al activarlo, también se añaden las que empiecen a coincidir después. Las sesiones nunca se quitan al cambiar de estado.", // A status filter keeps the sessions that matched when you applied it. When on, sessions that begin matching later are added as well. Sessions are never removed as their status changes.
   "settings.tabSingle": "Única", // Single
   "settings.tabMulti": "Múltiples", // Multi
   "settings.maxLiveTabs": "Background limit", // Background limit
+  "settings.maxLiveTabsHint": "Cuántas sesiones siguen ejecutándose en segundo plano en modo de pestaña única. Superado el límite se cierra la sesión inactiva más antigua; se conservan las que trabajan, esperan una respuesta tuya o tienen una notificación sin leer.", // How many sessions keep running in the background in single-tab mode. Beyond the limit the oldest idle session is closed; ones that are working, waiting for you, or holding an unread notification are kept.
   "settings.defaultShell": "Shell predeterminada", // Default shell
   "settings.spawnConfirm": "Confirm before spawn", // Confirm before spawn
+  "settings.spawnConfirmHint": "Se aplica a las sesiones que un agente deriva con vspawn, no a las pestañas que abres tú. Activado, puedes revisar y editar el prompt antes de que la sesión arranque.", // Applies to sessions an agent derives with vspawn, not to tabs you open yourself. When on, you can review and edit the prompt before the session starts.
   "settings.usageAuto": "Usage auto-refresh", // Usage auto-refresh
   "settings.usageRefresh": "Usage refresh", // Usage refresh
   "settings.autoContinue": "Continuar tras el restablecimiento", // Continue after limit resets
@@ -862,7 +866,7 @@ const es: typeof en = {
   "settings.fontPreviewChat": "He actualizado la página de ajustes. Cada ajuste de fuente se aplica de inmediato y puede restablecer los valores predeterminados en cualquier momento.",
   "settings.fontResetGroup": "Restablecer las fuentes predeterminadas",
   "settings.composerChips": "Barra de herramientas del editor",
-  "settings.composerChipsHint": "Los elementos activados aparecen junto al mensaje en el orden indicado. Si una función no está disponible temporalmente (el agente no se está ejecutando, no hay tareas en segundo plano o el inicio de sesión está pendiente), su elemento sigue visible, pero vacío o desactivado. Se omiten las funciones que el agente actual no admite. Los elementos que no caben pasan al menú Más. Los elementos desactivados aquí solo aparecen en ese menú y se pueden seguir configurando aquí.",
+  "settings.composerChipsHint": "Los elementos activados aparecen junto al mensaje en el orden indicado. Si una función no está disponible temporalmente (el agente no se está ejecutando, no hay tareas en segundo plano o el inicio de sesión está pendiente), su elemento sigue visible, pero vacío o desactivado. Se omiten las funciones que el agente actual no admite. Los elementos que no caben pasan al menú Más. Los elementos desactivados aquí no se muestran en ningún lugar hasta que los vuelva a activar.",
   "settings.composerChipUp": (chip: string) => `Subir ${chip}`,
   "settings.composerChipDown": (chip: string) => `Bajar ${chip}`,
   "settings.composerChip.model": "Modelo",
@@ -1009,6 +1013,19 @@ const es: typeof en = {
   "remote.mirror": "Reflejar el diseño en todos los dispositivos", // Mirror layout across devices
   "remote.mirrorHint":
     "Las pestañas, las divisiones y la sesión activa se mantienen iguales en todos los dispositivos conectados. El foco del teclado no cambia en ninguno.", // Tabs, splits, and the active session stay the same on every connected device. Keyboard focus stays put on each one.
+  "remote.listenLabel": "Escuchar en", // Listen on
+  "remote.listenAll": "Todas las redes", // All networks
+  "remote.listenLoopback": "Solo este equipo (túnel)", // This computer only (tunnel)
+  "remote.listenUnavailable": (ip: string) => `${ip} (no disponible)`, // ${ip} (not available)
+  "remote.reachAll": "Accesible desde todas las redes a las que está conectado este equipo.", // Reachable from every network this computer is connected to.
+  "remote.reachOnly": (addr: string) => `Accesible solo en ${addr}.`, // Reachable only at ${addr}.
+  "remote.reachTunnel": "Accesible solo mediante un túnel o proxy en este equipo, por ejemplo tailscale serve o ssh -L.", // Reachable only through a tunnel or proxy on this computer, for example tailscale serve or ssh -L.
+  "remote.pairingHostLabel": "Dirección para enlaces de emparejamiento", // Address for pairing links
+  "remote.pairingHostPlaceholder": "host.tailnet.ts.net", // host.tailnet.ts.net
+  "remote.pairingHostNeeded": "Los clientes llegan a este equipo mediante un túnel. Introduce el nombre de host o la IP que usan. Sin él, los enlaces de emparejamiento apuntan a 127.0.0.1, que solo funciona con ssh -L.", // Clients reach this computer through a tunnel. Enter the host name or IP they use. Without it, pairing links point to 127.0.0.1, which only works with ssh -L.
+  "remote.bindInvalid": (value: string) => `«${value}» no es una dirección de escucha válida. Elige todas las redes, solo este equipo, o una dirección IPv4 de este equipo.`, // "${value}" is not a valid listen address. Choose all networks, this computer only, or an IPv4 address of this computer.
+  "remote.bindUnavailable": (ip: string) => `La dirección ${ip} no está disponible en este equipo. Conecta la red o la VPN, o elige otra dirección. El acceso remoto nunca recurre a todas las redes.`, // The address ${ip} is not available on this computer. Connect the network or VPN, or choose another address. Remote access never falls back to all networks.
+  "remote.pairingHostInvalid": (value: string) => `«${value}» no es una dirección válida para enlaces de emparejamiento. Introduce un nombre de host o una dirección IPv4, sin esquema, puerto ni ruta.`, // "${value}" is not a valid address for pairing links. Enter a host name or an IPv4 address, without scheme, port, or path.
 
   // ── Remote connection panel ──
   "connect.wslUpgrade": "Este espacio de trabajo utiliza otra versión del servidor. Reiniciar el servidor finaliza todas las sesiones activas de este espacio de trabajo WSL.",
@@ -1624,6 +1641,7 @@ const es: typeof en = {
   "files.nameLabel": "Nombre", // Name
   "files.newTooltip": "Nuevo archivo o carpeta", // New file or folder
   "files.openInTerminal": "Open in Terminal",
+  "files.collapseAll": "Contraer todo", // Collapse All
   "files.revealInFinder": "Show in File Manager",
   "files.copyPath": "Copy Path",
   "files.copyRelPath": "Copy Relative Path",
@@ -2651,6 +2669,8 @@ const es: typeof en = {
   "sidebarSection.nav": "Secciones de la barra lateral",
   "sidebarSection.noTasks": "Todavía no hay sesiones de tarea.",
   "sidebarSection.noChats": "Todavía no hay sesiones de chat.",
+  "sidebarSection.setDefaultView": "Establecer como vista predeterminada",
+  "sidebarSection.clearDefaultView": "Quitar la vista predeterminada",
   "artifact.comment": "Comentar", // Comment
   "artifact.commentTitle": "Haz clic en elementos de la página para dejar comentarios al agente", // Click elements in the page to leave comments for the agent
   "artifact.pickHint": "Haz clic en un elemento de la página para comentarlo. Pulsa Esc para terminar.", // Click an element in the page to comment on it. Press Esc to stop.

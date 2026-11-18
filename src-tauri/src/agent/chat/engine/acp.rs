@@ -46,9 +46,9 @@ const STOP_POLL_INTERVAL: Duration = Duration::from_millis(500);
 pub(super) enum PendingRequest {
     Permission { id: Value, params: Value },
     Elicitation { id: Value, params: Value, card_payload: Value },
+    /// One of Grok's own `_x.ai/...` dialogs, which takes its own method's answer shape.
+    GrokDialog { id: Value, method: String, params: Value },
     DetachedRecovery { row_id: String, tool_name: String, args: Value, card_payload: Value },
-    /// A Grok dialog answered in its own shape: `stored` carries the method under `_grokMethod`.
-    GrokDialog { id: Value, stored: Value },
 }
 
 #[derive(Default)]
@@ -71,10 +71,6 @@ impl StopPark {
 pub(super) struct RetireWaiter {
     pending: Mutex<HashSet<String>>,
     cv: Condvar,
-}
-
-fn native_cwd(cwd: &str, windows: bool) -> String {
-    if windows { cwd.replace('/', "\\") } else { cwd.to_string() }
 }
 
 /// Everything the engine keeps about the ACP side of one session.
@@ -256,24 +252,32 @@ pub(super) fn prefill(app: &AppCtx, proc: &Arc<ChatProcess>, native: &str) {
 
 /// Send `initialize`; the rest of the handshake follows from its answer.
 pub(super) fn bootstrap(app: &AppCtx, proc: &Arc<ChatProcess>, resume: Option<&str>, cwd: Option<&str>, collaboration_mode: Option<&str>) {
-    bootstrap_for_platform(app, proc, resume, cwd, collaboration_mode, cfg!(windows));
-}
-
-fn bootstrap_for_platform(app: &AppCtx, proc: &Arc<ChatProcess>, resume: Option<&str>, cwd: Option<&str>, collaboration_mode: Option<&str>, windows: bool) {
     {
         let mut state = proc.acp.lock().unwrap();
         state.mapper = Mapper::for_kind(proc.kind);
         state.resume = resume.map(str::to_string);
         // Grok reopens a session only under the exact cwd text it was filed with, so take that from its store.
         let filed = resume.filter(|_| proc.kind == SessionKind::Grok).and_then(crate::agent::resume::grok_session_cwd);
-        state.cwd = filed.unwrap_or_else(|| native_cwd(&cwd.map(str::to_string)
+        state.cwd = filed.unwrap_or_else(|| native_cwd(cwd.map(str::to_string)
             .or_else(|| crate::host::home_dir().map(|home| home.to_string_lossy().into_owned()))
-            .unwrap_or_else(|| "/".into()), windows));
+            .unwrap_or_else(|| "/".into())));
         state.journal = resume.and_then(|native| journal_path(app, proc.kind, native));
         state.desired_mode = collaboration_mode.map(str::to_string).filter(|mode| !mode.is_empty());
     }
     let id = proc.request_id("acp_initialize");
     let _ = proc.write(&wire::initialize(&id));
+}
+
+/// The cwd in the platform's own spelling. Windows stores worktree paths as `C:/...` (Git's spelling), while an
+/// agent started in the terminal sees its process cwd as `C:\...`; agents that key sessions by the cwd text
+/// (Grok's directory name, Cursor's hash) must get the same text from both views.
+fn native_cwd(cwd: String) -> String {
+    #[cfg(windows)]
+    {
+        let native = std::path::Path::new(&cwd).components().collect::<PathBuf>();
+        if !native.as_os_str().is_empty() { return native.to_string_lossy().into_owned(); }
+    }
+    cwd
 }
 
 // ─────────────────────────── Incoming ───────────────────────────
@@ -306,23 +310,24 @@ fn handle_response(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>, id: 
             None => on_initialize(app, session_id, proc, &result.unwrap_or(Value::Null)),
         },
         Some("acp_session_new") | Some("acp_session_load") | Some("acp_session_resume") => match error {
-            // The recorded conversation cannot be reopened: its directory or its own recording is gone.
-            // Start a fresh native conversation rather than leaving the pane unusable; the rows on screen
-            // come from VelaTerm's recording, and a new id has no prior lease to check.
-            Some(error) if kind != Some("acp_session_new")
-                && !wire::auth_required(&error) && !wire::api_key_missing(&error) => {
+            // The recorded conversation is gone: its directory, its recording, or the session itself.
+            // Start a fresh native conversation instead of leaving the pane unusable, and say so — the
+            // rows on screen come from VelaTerm's own recording, which the agent no longer has.
+            Some(error) if kind != Some("acp_session_new") && wire::conversation_missing(&error) => {
                 crate::diagnostics::record("WARN", "agent_chat", json!({
-                    "sessionId":session_id,"event":"native_conversation_unavailable",
+                    "sessionId":session_id,"event":"native_conversation_missing",
                     "agent":proc.kind.as_str(),"reason":wire::error_text(&error)
                 }));
-                proc.identity_checked.store(true, Ordering::Relaxed);
-                let cwd = proc.acp.lock().unwrap().cwd.clone();
-                {
+                let cwd = {
                     let mut state = proc.acp.lock().unwrap();
                     state.loading = None;
                     state.resume = None;
                     state.mapper = Mapper::for_kind(proc.kind);
-                }
+                    state.cwd.clone()
+                };
+                emit(app, session_id, json!({"type":"error","message":format!(
+                    "{} could not reopen that conversation; a new one has been started. Earlier messages stay in this view.",
+                    wire::label(proc.kind))}));
                 let id = proc.request_id("acp_session_new");
                 if proc.write(&wire::session_new(&id, &cwd)).is_err() {
                     proc.acp.lock().unwrap().loading = None;
@@ -347,8 +352,7 @@ fn on_initialize(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>, result
         let mut state = proc.acp.lock().unwrap();
         state.load_session = capabilities.get("loadSession").and_then(Value::as_bool).unwrap_or(false);
         state.resume_session = capabilities.pointer("/sessionCapabilities/resume").is_some_and(|resume| !resume.is_null());
-        let images = proc.kind == SessionKind::Grok
-            || capabilities.pointer("/promptCapabilities/image").and_then(Value::as_bool).unwrap_or(false);
+        let images = capabilities.pointer("/promptCapabilities/image").and_then(Value::as_bool).unwrap_or(false);
         state.images = images;
         state.images_known = true;
         (state.resume.clone(), state.cwd.clone(), images)
@@ -411,10 +415,6 @@ fn on_open(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>, result: &Val
         super::antigravity_tasks::on_open(app, session_id, proc, &native);
     }
     apply_saved_selection(app, session_id, proc, &presets, current);
-    // The catalogue is complete only now: the session has reported its models and each model's own
-    // reasoning ladder. A picker that read before the agent answered saw the CLI list with no ladders, so
-    // ask it to read again and fill in the thinking levels.
-    emit(app, session_id, json!({"type":"models"}));
     let images = {
         let state = proc.acp.lock().unwrap();
         state.images_known.then_some(state.images)
@@ -719,8 +719,8 @@ fn handle_update(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>, update
             return;
         }
         "session_info_update" => {
-            // Grok names its own conversation and refreshes that title as it develops. Adopt it on the
-            // sidebar while the session still carries an automatic/provisional name.
+            // Grok names its own conversation and refreshes that title as it develops. Adopt it in the
+            // sidebar while the session still carries a placeholder or a title the agent itself wrote.
             if proc.kind == SessionKind::Grok {
                 if let Some(title) = update.get("title").and_then(Value::as_str) {
                     crate::agent::server::rename_from_agent_title(app, session_id, title);
@@ -782,16 +782,6 @@ fn adopt_mode(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>, mode: &st
 }
 
 fn handle_request(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>, id: Value, method: &str, params: Value) {
-    let card = format!("acp-{}", wire::id_key(&id));
-    if let Some((payload, stored)) = wire::grok_dialog(proc.kind, &card, method, &params) {
-        // These wait for the person even in bypass, as in Grok's own terminal. An error answer cancels
-        // them: a plan stays unapproved in plan mode, and questions and MCP forms go unanswered.
-        proc.acp.lock().unwrap().requests.insert(card.clone(), PendingRequest::GrokDialog { id, stored });
-        proc.permissions.lock().unwrap().insert(card, payload.clone());
-        emit(app, session_id, json!({"type":"permission","request":payload}));
-        emit_state(app, session_id, AgentState::Asking);
-        return;
-    }
     match method {
         "session/request_permission" => {
             if proc.mode.lock().unwrap().as_str() == "bypassPermissions" {
@@ -814,6 +804,22 @@ fn handle_request(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>, id: V
             proc.acp.lock().unwrap().requests.insert(
                 card.clone(),
                 PendingRequest::Elicitation { id, params, card_payload: payload.clone() },
+            );
+            proc.permissions.lock().unwrap().insert(card, payload.clone());
+            emit(app, session_id, json!({"type":"permission","request":payload}));
+            emit_state(app, session_id, AgentState::Asking);
+        }
+        wire::EXIT_PLAN_MODE | wire::ASK_USER_QUESTION | wire::MCP_ELICIT => {
+            // These wait for the person even in bypass, as in Grok's own terminal: an error answer would
+            // cancel a plan, a question, or a form the model is waiting on.
+            let card = format!("acp-grok-{}", wire::id_key(&id));
+            let Some(payload) = wire::grok_dialog(proc.kind, &card, method, &params) else {
+                let _ = proc.write(&wire::error_response(&id, -32601, &format!("{method} is not supported by this client")));
+                return;
+            };
+            proc.acp.lock().unwrap().requests.insert(
+                card.clone(),
+                PendingRequest::GrokDialog { id, method: method.to_string(), params },
             );
             proc.permissions.lock().unwrap().insert(card, payload.clone());
             emit(app, session_id, json!({"type":"permission","request":payload}));
@@ -848,11 +854,6 @@ pub(super) fn respond(
             proc.write(&wire::permission_outcome(&id, option.as_deref()))?;
             resolve(app, session_id, proc, card);
         }
-        PendingRequest::GrokDialog { id, stored } => {
-            let method = wire::grok_method(&stored).unwrap_or("");
-            proc.write(&wire::grok_dialog_answer(&id, method, allow, updated_input, message))?;
-            resolve(app, session_id, proc, card);
-        }
         PendingRequest::Elicitation { id, params, card_payload } => {
             proc.write(&wire::elicitation_outcome(&id, &card_payload, &params, allow, updated_input, message))?;
             let updated_row = if card_payload.get("tool_name").and_then(Value::as_str) == Some("AskUserQuestion") {
@@ -863,6 +864,10 @@ pub(super) fn respond(
             if let Some(row) = updated_row {
                 proc.timeline.lock().unwrap().upsert(row);
             }
+            resolve(app, session_id, proc, card);
+        }
+        PendingRequest::GrokDialog { id, method, .. } => {
+            proc.write(&wire::grok_dialog_answer(&id, &method, allow, updated_input, message))?;
             resolve(app, session_id, proc, card);
         }
         PendingRequest::DetachedRecovery { row_id, tool_name, args, card_payload } => {
@@ -1034,8 +1039,8 @@ fn cancel_pending(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>) {
             PendingRequest::Elicitation { id, params, card_payload } => {
                 let _ = proc.write(&wire::elicitation_outcome(&id, &card_payload, &params, false, None, Some("cancel")));
             }
-            PendingRequest::GrokDialog { id, stored } => {
-                let _ = proc.write(&wire::cancelled_outcome(&id, &stored));
+            PendingRequest::GrokDialog { id, method, .. } => {
+                let _ = proc.write(&wire::grok_cancelled_outcome(&id, &method));
             }
             PendingRequest::DetachedRecovery { row_id, .. } => {
                 super::antigravity_tasks::settle_rows(proc, std::slice::from_ref(&row_id));
@@ -1147,7 +1152,7 @@ fn on_prompt_end(app: &AppCtx, session_id: &str, proc: &Arc<ChatProcess>, id: &s
     }
     if proc.kind == SessionKind::Grok {
         // Grok may not re-emit `session_info_update` for a resumed conversation, so also read the title
-        // it persisted to summary.json and let an automatic/provisional name follow it.
+        // it persisted beside its recording and let a placeholder or adopted name follow it.
         crate::agent::server::sync_grok_title_from_disk(app, session_id);
     }
 }
@@ -1497,8 +1502,7 @@ pub(super) fn validate(proc: &ChatProcess, behavior: &str, image_count: usize) -
     let state = proc.acp.lock().unwrap();
     // The handshake has not answered yet: the message waits in the queue, and `dispatch` checks again
     // before it is written. Refusing here would lose the first image of a conversation already starting.
-    // Grok accepts image blocks even though its server advertises `image: false`.
-    let images = !state.images_known || state.images || proc.kind == SessionKind::Grok;
+    let images = !state.images_known || state.images;
     drop(state);
     wire::validate(behavior, image_count, images, proc.kind == SessionKind::Antigravity)
 }
@@ -1585,8 +1589,8 @@ pub(super) fn cancel(proc: &Arc<ChatProcess>) -> Result<(), String> {
             PendingRequest::Elicitation { id, params, card_payload } => {
                 let _ = proc.write(&wire::elicitation_outcome(&id, &card_payload, &params, false, None, Some("cancel")));
             }
-            PendingRequest::GrokDialog { id, stored } => {
-                let _ = proc.write(&wire::cancelled_outcome(&id, &stored));
+            PendingRequest::GrokDialog { id, method, .. } => {
+                let _ = proc.write(&wire::grok_cancelled_outcome(&id, &method));
             }
             PendingRequest::DetachedRecovery { row_id, .. } => {
                 super::antigravity_tasks::settle_rows(proc, std::slice::from_ref(&row_id));
@@ -1718,7 +1722,7 @@ pub(super) fn chat_models(app: &AppCtx, proc: &Arc<ChatProcess>) -> Option<Vec<V
 fn catalog_models(catalog: &Catalog) -> Vec<Value> {
     let shared: Vec<&str> = catalog.efforts.iter().map(|choice| choice.id.as_str()).collect();
     catalog.models.iter().map(|model| {
-        // Prefer the model's own ladder when the agent stated one; fall back to the session-wide ladder.
+        // Prefer the ladder the model stated for itself; fall back to the session-wide one.
         let efforts: Vec<&str> = match catalog.model_efforts.get(&model.id) {
             Some(levels) => levels.iter().map(String::as_str).collect(),
             None => shared.clone(),
@@ -1728,31 +1732,6 @@ fn catalog_models(catalog: &Catalog) -> Vec<Value> {
             "effortLevels": efforts,
         })
     }).collect()
-}
-
-/// Backend settings holding the last model catalogue a conversation engine reported, so its picker works
-/// before the agent has been started again.
-pub const DEEPSEEK_MODELS_SETTING: &str = "deepseek.models";
-pub const GROK_MODELS_SETTING: &str = "grok.models";
-
-/// Keep the catalogue for the model picker of a conversation whose agent is not running. Asking a
-/// short-lived harness instead would leave work behind — dsh records a session as soon as one is opened,
-/// prompt or not — so the last catalogue the agent reported is saved and reused instead.
-fn remember_catalog(app: &AppCtx, kind: SessionKind, catalog: &Catalog) {
-    let key = match kind {
-        SessionKind::Deepseek => DEEPSEEK_MODELS_SETTING,
-        SessionKind::Grok => GROK_MODELS_SETTING,
-        _ => return,
-    };
-    if !catalog.model_switchable() { return; }
-    let Ok(value) = serde_json::to_string(&catalog_models(catalog)) else { return };
-    let conn = app.db().conn.lock().unwrap();
-    if crate::db::repo::get_app_settings(&conn).ok().and_then(|settings| settings.get(key).cloned()).as_deref() == Some(value.as_str()) {
-        return;
-    }
-    if let Err(error) = crate::db::repo::set_app_settings(&conn, &HashMap::from([(key.to_string(), value)])) {
-        crate::diagnostic_warn!("chat: {key} catalogue could not be saved: {error}");
-    }
 }
 
 #[cfg(test)]
@@ -1783,24 +1762,10 @@ mod tests {
         handle_line(app, "s", proc, &json!({"jsonrpc":"2.0","id":request["id"],"result":result}).to_string());
     }
 
-    fn reply_error(app: &AppCtx, proc: &Arc<ChatProcess>, request: &Value, message: &str) {
-        handle_line(app, "s", proc, &json!({"jsonrpc":"2.0","id":request["id"],
-            "error":{"code":-32603,"message":message,"data":{"code":"FS_NOT_FOUND"}}}).to_string());
-    }
-
     fn notify(app: &AppCtx, proc: &Arc<ChatProcess>, update: Value) {
         handle_line(app, "s", proc, &json!({"jsonrpc":"2.0","method":"session/update","params":{"sessionId":"s1","update":update}}).to_string());
     }
 
-    #[test]
-    fn windows_cwd_is_normalized_and_unix_cwd_is_preserved() {
-        assert_eq!(native_cwd("C:/Users/alice/workspace/demo", true), r"C:\Users\alice\workspace\demo");
-        assert_eq!(native_cwd(r"C:\Users\alice\workspace\demo", true), r"C:\Users\alice\workspace\demo");
-        assert_eq!(native_cwd("/Users/alice/workspace/demo", false), "/Users/alice/workspace/demo");
-    }
-
-    /// Grok gives every model its own reasoning ladder; the picker must hand each one back, not one borrowed
-    /// ladder shared by all.
     #[test]
     fn catalog_models_report_each_models_own_ladder() {
         let mut catalog = Catalog::default();
@@ -1815,24 +1780,33 @@ mod tests {
         assert_eq!(models[1]["effortLevels"], json!(["low"]));
     }
 
+    /// A conversation whose native recording is gone opens a fresh one, and says so; anything else is
+    /// still reported as the failure it is instead of silently replacing the conversation.
     #[test]
-    fn windows_cwd_uses_native_separators_for_new_load_and_resume() {
-        let cwd = "C:/Users/alice/workspace/demo.worktrees/feature-1";
-        let cases = [
-            (Some("load-id"), json!({"loadSession":true}), "session/load"),
-            (Some("resume-id"), json!({"sessionCapabilities":{"resume":{}}}), "session/resume"),
-            (None, json!({}), "session/new"),
-        ];
-        for (resume, capabilities, method) in cases {
-            let app = ctx("acp-windows-cwd");
-            let (proc, mut agent) = wired(SessionKind::Grok);
-            bootstrap_for_platform(&app, &proc, resume, Some(cwd), None, true);
-            let initialize = written(&mut agent);
-            reply(&app, &proc, &initialize, json!({"agentCapabilities":capabilities}));
-            let open = written(&mut agent);
-            assert_eq!(open["method"], method);
-            assert_eq!(open["params"]["cwd"], r"C:\Users\alice\workspace\demo.worktrees\feature-1");
-        }
+    fn a_missing_native_conversation_opens_a_fresh_one_and_other_failures_still_fail() {
+        let app = ctx("acp-load-missing");
+        let (proc, mut agent) = wired(SessionKind::Grok);
+        bootstrap(&app, &proc, Some("native-lost"), Some("/w"), None);
+        let initialize = written(&mut agent);
+        reply(&app, &proc, &initialize, json!({"agentCapabilities":{"loadSession":true}}));
+        let load = written(&mut agent);
+        assert_eq!(load["method"], "session/load");
+        handle_line(&app, "s", &proc, &json!({"jsonrpc":"2.0","id":load["id"],
+            "error":{"code":-32603,"message":"Path not found.","data":{"code":"FS_NOT_FOUND"}}}).to_string());
+        let fresh = written(&mut agent);
+        assert_eq!(fresh["method"], "session/new");
+        assert_eq!(fresh["params"]["cwd"], "/w");
+        assert!(proc.ready.load(Ordering::Relaxed) || !proc.released.load(Ordering::Relaxed));
+
+        // A protocol error is not a lost conversation: the start fails as before.
+        let (other, mut other_agent) = wired(SessionKind::Grok);
+        bootstrap(&app, &other, Some("native-broken"), Some("/w"), None);
+        let initialize = written(&mut other_agent);
+        reply(&app, &other, &initialize, json!({"agentCapabilities":{"loadSession":true}}));
+        let load = written(&mut other_agent);
+        handle_line(&app, "s", &other, &json!({"jsonrpc":"2.0","id":load["id"],
+            "error":{"code":-32602,"message":"Invalid params"}}).to_string());
+        assert!(other.released.load(Ordering::Relaxed));
     }
 
     #[test]
@@ -1872,49 +1846,6 @@ mod tests {
         assert_eq!(proc.collaboration_mode.lock().unwrap().as_deref(), Some("plan"));
         assert_eq!(proc.collaboration_modes.lock().unwrap().len(), 2);
         assert_eq!(proc.agent_session_id.lock().unwrap().as_deref(), Some("s1"));
-    }
-
-    #[test]
-    fn images_are_accepted_before_the_initialize_answer_arrives() {
-        let app = ctx("acp-image-race");
-        let (grok, _agent) = wired(SessionKind::Grok);
-        assert!(validate(&grok, "queue", 1).is_ok());
-        let (copilot, _agent) = wired(SessionKind::Copilot);
-        assert!(validate(&copilot, "queue", 1).is_err());
-        assert!(validate(&copilot, "queue", 0).is_ok());
-    }
-
-    #[test]
-    fn a_conversation_whose_recording_is_gone_opens_a_fresh_one() {
-        let app = ctx("acp-load-fallback");
-        let (proc, mut agent) = wired(SessionKind::Grok);
-        bootstrap(&app, &proc, Some("native-lost"), Some("/w"), None);
-        let initialize = written(&mut agent);
-        reply(&app, &proc, &initialize, json!({"agentCapabilities":{"loadSession":true,"promptCapabilities":{"image":false}}}));
-        let load = written(&mut agent);
-        assert_eq!(load["method"], "session/load");
-        reply_error(&app, &proc, &load, "Path not found.");
-        let fresh = written(&mut agent);
-        assert_eq!(fresh["method"], "session/new");
-        assert_eq!(fresh["params"]["cwd"], "/w");
-    }
-
-    #[test]
-    fn grok_accepts_images_even_though_its_server_reports_them_unsupported() {
-        let app = ctx("acp-grok-images");
-        let (proc, mut agent) = wired(SessionKind::Grok);
-        bootstrap(&app, &proc, None, Some("/w"), None);
-        let initialize = written(&mut agent);
-        reply(&app, &proc, &initialize, json!({"agentCapabilities":{"promptCapabilities":{"image":false}}}));
-        let _new = written(&mut agent);
-        assert!(proc.acp.lock().unwrap().images);
-
-        let (other, mut other_agent) = wired(SessionKind::Deepseek);
-        bootstrap(&app, &other, None, Some("/w"), None);
-        let initialize = written(&mut other_agent);
-        reply(&app, &other, &initialize, json!({"agentCapabilities":{"promptCapabilities":{"image":false}}}));
-        let _new = written(&mut other_agent);
-        assert!(!other.acp.lock().unwrap().images);
     }
 
     #[test]
@@ -1962,55 +1893,6 @@ mod tests {
     }
 
     #[test]
-    fn grok_plan_approval_is_a_plan_card_answered_with_its_outcome() {
-        let app = ctx("acp-plan");
-        let (proc, mut agent) = wired(SessionKind::Grok);
-        *proc.agent_session_id.lock().unwrap() = Some("s1".into());
-        *proc.mode.lock().unwrap() = "bypassPermissions".into();
-        let ask = |id: i64| json!({"jsonrpc":"2.0","id":id,"method":"_x.ai/exit_plan_mode",
-            "params":{"sessionId":"s1","toolCallId":"t1","planContent":"1. Do it"}}).to_string();
-        handle_line(&app, "s", &proc, &ask(0));
-        let card = proc.permissions.lock().unwrap().get("acp-0").cloned().expect("the plan waits for the person");
-        assert_eq!((card["tool_name"].as_str(), card["input"]["plan"].as_str()), (Some("ExitPlanMode"), Some("1. Do it")));
-        approve_pending(&app, "s", &proc);
-        assert!(proc.permissions.lock().unwrap().contains_key("acp-0"));
-        respond(&app, "s", &proc, "acp-0", true, None, None, None).unwrap();
-        assert_eq!(written(&mut agent), json!({"jsonrpc":"2.0","id":0,"result":{"outcome":"approved"}}));
-        handle_line(&app, "s", &proc, &ask(1));
-        respond(&app, "s", &proc, "acp-1", false, None, None, None).unwrap();
-        assert_eq!(written(&mut agent), json!({"jsonrpc":"2.0","id":1,"result":{"outcome":"rejected"}}));
-        assert!(proc.permissions.lock().unwrap().is_empty());
-    }
-
-    #[test]
-    fn grok_questions_and_mcp_forms_are_cards_answered_in_grok_shape() {
-        let app = ctx("acp-grok-dialogs");
-        let (proc, mut agent) = wired(SessionKind::Grok);
-        *proc.agent_session_id.lock().unwrap() = Some("s1".into());
-        handle_line(&app, "s", &proc, &json!({"jsonrpc":"2.0","id":2,"method":"_x.ai/ask_user_question","params":{"sessionId":"s1",
-            "toolCallId":"t1","questions":[{"question":"Pick a color?","options":[{"label":"Red"},{"label":"Blue"}],"multiSelect":null}],
-            "mode":"default"}}).to_string());
-        let card = proc.permissions.lock().unwrap().get("acp-2").cloned().expect("the question waits for the person");
-        assert_eq!((card["tool_name"].as_str(), card["input"]["questions"][0]["header"].as_str()), (Some("AskUserQuestion"), Some("Q1")));
-        let answered = json!({"questions":card["input"]["questions"],"answers":{"Pick a color?":"Red"}});
-        respond(&app, "s", &proc, "acp-2", true, Some(&answered), None, None).unwrap();
-        assert_eq!(written(&mut agent), json!({"jsonrpc":"2.0","id":2,"result":{"outcome":"accepted","answers":{"Pick a color?":"Red"}}}));
-        let elicit = |id: i64| json!({"jsonrpc":"2.0","id":id,"method":"_x.ai/mcp/elicit","params":{"sessionId":"s1","toolCallId":"m1",
-            "serverName":"srv","message":"Name?","mode":"form","requestedSchema":{"type":"object","properties":{"name":{"type":"string"}}}}}).to_string();
-        handle_line(&app, "s", &proc, &elicit(3));
-        let card = proc.permissions.lock().unwrap().get("acp-3").cloned().expect("the form waits for the person");
-        assert_eq!((card["subtype"].as_str(), card["mcp_server_name"].as_str()), (Some("elicitation"), Some("srv")));
-        respond(&app, "s", &proc, "acp-3", true, Some(&json!({"name":"Kai"})), None, None).unwrap();
-        assert_eq!(written(&mut agent), json!({"jsonrpc":"2.0","id":3,"result":{"outcome":"accept","content":{"name":"Kai"}}}));
-        handle_line(&app, "s", &proc, &elicit(4));
-        respond(&app, "s", &proc, "acp-4", false, None, Some("cancel"), None).unwrap();
-        assert_eq!(written(&mut agent), json!({"jsonrpc":"2.0","id":4,"result":{"outcome":"cancel"}}));
-        handle_line(&app, "s", &proc, &elicit(5));
-        cancel_pending(&app, "s", &proc);
-        assert_eq!(written(&mut agent), json!({"jsonrpc":"2.0","id":5,"result":{"outcome":"cancel"}}));
-    }
-
-    #[test]
     fn a_steer_keeps_the_turn_open_until_its_own_prompt_answers() {
         let app = ctx("acp-steer");
         let (proc, mut agent) = wired(SessionKind::Antigravity);
@@ -2031,6 +1913,68 @@ mod tests {
         assert!(!proc.turn.lock().unwrap().running);
         assert!(proc.acp.lock().unwrap().prompt.is_none());
         assert!(proc.acp.lock().unwrap().steers.is_empty());
+    }
+
+    /// Grok asks for plan approval through its own request; the card is VelaTerm's plan card, and the
+    /// answer has to come back in Grok's shape rather than as an ACP permission outcome.
+    #[test]
+    fn grok_plan_approval_is_a_plan_card_answered_with_its_outcome() {
+        let app = ctx("acp-grok-plan");
+        let (proc, mut agent) = wired(SessionKind::Grok);
+        *proc.agent_session_id.lock().unwrap() = Some("s1".into());
+        *proc.mode.lock().unwrap() = "bypassPermissions".into();
+        let ask = |id: i64| json!({"jsonrpc":"2.0","id":id,"method":"_x.ai/exit_plan_mode",
+            "params":{"sessionId":"s1","toolCallId":"t1","planContent":"1. Do it"}}).to_string();
+        handle_line(&app, "s", &proc, &ask(0));
+        let card = proc.permissions.lock().unwrap().get("acp-grok-0").cloned().expect("the plan waits for the person");
+        assert_eq!((card["tool_name"].as_str(), card["input"]["plan"].as_str()), (Some("ExitPlanMode"), Some("1. Do it")));
+        // Bypass approves tool permissions, never a plan: the person still has to say yes.
+        approve_pending(&app, "s", &proc);
+        assert!(proc.permissions.lock().unwrap().contains_key("acp-grok-0"));
+        respond(&app, "s", &proc, "acp-grok-0", true, None, None, None).unwrap();
+        assert_eq!(written(&mut agent), json!({"jsonrpc":"2.0","id":0,"result":{"outcome":"approved"}}));
+        handle_line(&app, "s", &proc, &ask(1));
+        respond(&app, "s", &proc, "acp-grok-1", false, None, None, None).unwrap();
+        assert_eq!(written(&mut agent), json!({"jsonrpc":"2.0","id":1,"result":{"outcome":"rejected"}}));
+        assert!(proc.permissions.lock().unwrap().is_empty());
+    }
+
+    /// Questions and MCP forms arrive as Grok's own requests and are answered in its three shapes.
+    #[test]
+    fn grok_questions_and_mcp_forms_are_cards_answered_in_grok_shape() {
+        let app = ctx("acp-grok-dialogs");
+        let (proc, mut agent) = wired(SessionKind::Grok);
+        *proc.agent_session_id.lock().unwrap() = Some("s1".into());
+        handle_line(&app, "s", &proc, &json!({"jsonrpc":"2.0","id":2,"method":"_x.ai/ask_user_question","params":{"sessionId":"s1",
+            "toolCallId":"t1","questions":[{"question":"Pick a color?","options":[{"label":"Red"},{"label":"Blue"}],"multiSelect":null}],
+            "mode":"default"}}).to_string());
+        let card = proc.permissions.lock().unwrap().get("acp-grok-2").cloned().expect("the question waits for the person");
+        assert_eq!((card["tool_name"].as_str(), card["input"]["questions"][0]["header"].as_str()),
+            (Some("AskUserQuestion"), Some("Q1")));
+        let answered = json!({"questions":card["input"]["questions"],"answers":{"Pick a color?":"Red"}});
+        respond(&app, "s", &proc, "acp-grok-2", true, Some(&answered), None, None).unwrap();
+        assert_eq!(written(&mut agent), json!({"jsonrpc":"2.0","id":2,
+            "result":{"outcome":"accepted","answers":{"Pick a color?":"Red"}}}));
+        let elicit = |id: i64| json!({"jsonrpc":"2.0","id":id,"method":"_x.ai/mcp/elicit","params":{"sessionId":"s1","toolCallId":"m1",
+            "serverName":"srv","message":"Name?","mode":"form","requestedSchema":{"type":"object","properties":{"name":{"type":"string"}}}}}).to_string();
+        handle_line(&app, "s", &proc, &elicit(3));
+        let card = proc.permissions.lock().unwrap().get("acp-grok-3").cloned().expect("the form waits for the person");
+        assert_eq!((card["subtype"].as_str(), card["mcp_server_name"].as_str()), (Some("elicitation"), Some("srv")));
+        respond(&app, "s", &proc, "acp-grok-3", true, Some(&json!({"name":"Kai"})), None, None).unwrap();
+        assert_eq!(written(&mut agent), json!({"jsonrpc":"2.0","id":3,"result":{"outcome":"accept","content":{"name":"Kai"}}}));
+        handle_line(&app, "s", &proc, &elicit(4));
+        respond(&app, "s", &proc, "acp-grok-4", false, None, Some("cancel"), None).unwrap();
+        assert_eq!(written(&mut agent), json!({"jsonrpc":"2.0","id":4,"result":{"outcome":"cancel"}}));
+        // A dismissed question skips the interview rather than failing the turn.
+        handle_line(&app, "s", &proc, &json!({"jsonrpc":"2.0","id":5,"method":"_x.ai/ask_user_question","params":{"sessionId":"s1",
+            "questions":[{"question":"Pick a color?","options":[]}]}}).to_string());
+        respond(&app, "s", &proc, "acp-grok-5", false, None, None, None).unwrap();
+        assert_eq!(written(&mut agent), json!({"jsonrpc":"2.0","id":5,"result":{"outcome":"skip_interview"}}));
+        // A turn that ends with a form still open answers it as cancelled, so the agent is never left waiting.
+        handle_line(&app, "s", &proc, &elicit(6));
+        cancel_pending(&app, "s", &proc);
+        assert_eq!(written(&mut agent), json!({"jsonrpc":"2.0","id":6,"result":{"outcome":"cancel"}}));
+        assert!(proc.permissions.lock().unwrap().is_empty());
     }
 
     #[test]

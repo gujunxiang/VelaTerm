@@ -8,9 +8,9 @@
 //! reasoning_efforts = ["none", "low", "high", "max"]
 //! ```
 //!
-//! Reading that file makes the composer's thinking chip work while the agent is not running, the way the
-//! Claude catalogue is served from its own curated manifest. The live ACP session also reports these
-//! ladders, but only once it has opened; the config is available immediately and names the same models.
+//! Reading that file makes the composer's thinking chip work while the agent is not running. A live ACP
+//! session reports the same ladders, but only after it has opened; the config is there immediately and
+//! names the same models.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -47,8 +47,8 @@ pub fn read(path: &Path) -> Result<HashMap<String, ConfigModel>, String> {
 
 /// Parse the config text. Split out so the shape can be checked without touching the user's home.
 pub fn parse(text: &str) -> HashMap<String, ConfigModel> {
-    let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else { return HashMap::new(); };
-    let Some(models) = doc.get("model").and_then(toml_edit::Item::as_table_like) else { return HashMap::new(); };
+    let Ok(doc) = text.parse::<toml_edit::DocumentMut>() else { return HashMap::new() };
+    let Some(models) = doc.get("model").and_then(toml_edit::Item::as_table_like) else { return HashMap::new() };
     let mut out = HashMap::new();
     for (id, item) in models.iter() {
         let Some(table) = item.as_table_like() else { continue };
@@ -100,5 +100,11 @@ reasoning_efforts = ["low", "medium", "high", "xhigh", "max"]
         assert!(!models.contains_key("magpie/group/free"));
         // A missing name falls back to the id.
         assert_eq!(models["magpie/auto/claude-opus-5-5"].label, "magpie/auto/claude-opus-5-5");
+    }
+
+    #[test]
+    fn a_malformed_file_yields_no_models_instead_of_an_error() {
+        assert!(parse("[model.\"x\"").is_empty());
+        assert!(parse("").is_empty());
     }
 }
